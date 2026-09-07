@@ -32,8 +32,23 @@ PanelWindow {
     property var images: []
     property int index: 0
 
+    /// The name in the state file, known before the directory has been listed.
+    property string remembered: ""
+
+    // The fallback is for a machine with no wallpapers, not for the second
+    // before the list arrives. Listing the directory means running find, and
+    // waiting for it showed the shipped default at every boot and then faded
+    // it out - which looks like the default is one of your images.
+    //
+    // The state file already names the image that was showing, and the
+    // directory is known, so the path can be built without waiting for
+    // anything.
     readonly property string current:
-        images.length > 0 ? images[index % images.length] : conf.fallback
+        images.length > 0
+            ? images[index % images.length]
+            : remembered.length > 0
+                ? conf.directory + "/" + remembered
+                : conf.fallback
 
     // The one file that says which image is showing.
     //
@@ -48,10 +63,15 @@ PanelWindow {
         watchChanges: true
         atomicWrites: true
         printErrors: false
+        // Read before the first frame rather than a moment after it: this is
+        // ten bytes, and the whole point is to have it in time.
+        preload: true
+        blockLoading: true
         onFileChanged: reload()
         onLoaded: {
             const name = text().trim();
             if (name.length === 0) return;
+            root.remembered = name;
             const at = root.images.findIndex(p => p.split("/").pop() === name);
             // Ignoring our own write, which would otherwise bounce straight
             // back and re-trigger the crossfade.
@@ -78,10 +98,48 @@ PanelWindow {
     // Process, Socket and streams, and Qt.labs.folderlistmodel is not in the
     // QML path - so the listing is a subprocess. Which is no loss: it means
     // the sort and the filter are visible here rather than implied.
+    // Re-listed whenever the directory changes, which includes the moment it
+    // first becomes known.
+    //
+    // Config starts on a fallback whose directory is the empty string and
+    // loads the real manifest a frame later. The scan ran once, at creation,
+    // against that empty string - so it listed nothing, and the next attempt
+    // was the rotation timer. The shipped default sat on screen until then:
+    // ten seconds here, fifteen minutes on the standard interval, looking
+    // for all the world like the wallpaper had not been set.
+    //
+    // A binding updating the command of a process that has already exited
+    // does not re-run it. Something has to say so.
+    readonly property string dir: conf.directory || ""
+    onDirChanged: rescan()
+
+    /// Start a listing, with the command set rather than bound.
+    ///
+    /// It was bound to `dir`, and started from dir's own change handler.
+    /// Nothing guarantees a dependent binding is re-evaluated before the
+    /// handler runs, and it was not: the process launched with the previous
+    /// command, `find ""`, which fails. The failure went to a stderr nobody
+    /// was reading, the empty stdout looked like an empty directory, and the
+    /// wallpaper stayed on the shipped default while every part of this
+    /// reported success.
+    function rescan() {
+        if (dir.length === 0) return;
+        scan.command = ["find", dir, "-maxdepth", "1", "-type", "f"];
+        scan.running = true;
+    }
+
     Process {
         id: scan
-        running: true
-        command: ["find", root.conf.directory, "-maxdepth", "1", "-type", "f"]
+        running: false
+        // A listing that fails should say so. Not reading this is what made
+        // the bug above invisible for an afternoon.
+        stderr: StdioCollector {
+            onStreamFinished: {
+                const err = (text || "").trim();
+                if (err.length > 0) console.warn("wallpaper: listing failed:", err);
+            }
+        }
+
         stdout: StdioCollector {
             onStreamFinished: {
                 const found = text.split("\n")
@@ -109,7 +167,7 @@ PanelWindow {
         running: root.visible
         repeat: true
         onTriggered: {
-            scan.running = true;
+            root.rescan();
             if (root.conf.rotate && root.images.length > 1)
                 root.index = (root.index + 1) % root.images.length;
         }
@@ -142,6 +200,14 @@ PanelWindow {
             fillMode: root.fillMode()
             asynchronous: true
             cache: false
+
+            // A remembered name can be a file somebody has since deleted.
+            // Without this the screen simply stays empty until the next
+            // rotation, which reads as the wallpaper being broken.
+            onStatusChanged: {
+                if (status === Image.Error && layer.path !== root.conf.fallback)
+                    layer.path = root.conf.fallback;
+            }
         }
 
         AnimatedImage {
@@ -167,5 +233,10 @@ PanelWindow {
     Layer { id: a; opacity: root.showA ? 1 : 0; Behavior on opacity { NumberAnimation { duration: 600 } } }
     Layer { id: b; opacity: root.showA ? 0 : 1; Behavior on opacity { NumberAnimation { duration: 600 } } }
 
-    Component.onCompleted: a.path = current
+    Component.onCompleted: {
+        const name = chosen.text().trim();
+        if (name.length > 0) remembered = name;
+        a.path = current;
+        rescan();
+    }
 }
