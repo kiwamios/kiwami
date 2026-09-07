@@ -905,6 +905,105 @@ fn unpersisted_state() -> Finding {
     .remedy("decide which matter and add them to kiwami.persist.directories")
 }
 
+/// Files that a bind mount has hidden.
+///
+/// Persistence is a bind mount: /persist/home/you/.ssh is mounted onto
+/// ~/.ssh. A mount covers whatever is at that path, like a rug over a table -
+/// what is underneath still exists on disk, and cannot be reached through
+/// that path any more.
+///
+/// Normally there is nothing under there: the directory on the root exists
+/// only as something for the mount to attach to. The trap is timing. Put
+/// files somewhere, then add that path to kiwami.persist and rebuild, and an
+/// empty directory from /persist is mounted straight over them. `ls` shows
+/// the empty side. The files sit on the root subvolume, unreachable, and the
+/// next boot wipes the root.
+///
+/// Seen for real: five wallpapers downloaded into ~/Pictures minutes before
+/// ~/Pictures became persisted. NixOS printed "Source directory does not
+/// exist; it will be created for you" - true, useful, and silent about the
+/// files it was about to hide.
+fn shadowed_by_persistence() -> Finding {
+    if !std::path::Path::new("/persist").is_dir() {
+        return Finding::new(Level::Skip, "not an ephemeral-root machine");
+    }
+    let Ok(raw) = fs::read_to_string("/etc/kiwami/persist.json") else {
+        return Finding::new(Level::Skip, "no persist list generated");
+    };
+    let Ok(list) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Finding::new(Level::Warn, "persist list is not valid JSON");
+    };
+
+    let strings = |k: &str| -> Vec<String> {
+        list.get(k)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    let user = list.get("user").and_then(|v| v.as_str()).unwrap_or("");
+    let mut paths: Vec<String> = strings("directories");
+    if !user.is_empty() {
+        paths.extend(strings("userDirectories").iter().map(|d| format!("/home/{user}/{d}")));
+    }
+    if paths.is_empty() {
+        return Finding::new(Level::Skip, "nothing declared persistent");
+    }
+
+    // Looking under a mount means mounting what it sits on, separately.
+    // Which needs root - and saying so beats reporting "nothing hidden"
+    // from a check that could not look.
+    if !crate::install::is_root() {
+        return Finding::new(Level::Skip, "run as root to look under the persist mounts");
+    }
+    let Some(src) = output("findmnt", &["-no", "SOURCE", "/"]) else {
+        return Finding::new(Level::Skip, "cannot tell what / is on");
+    };
+    let src = src.trim();
+    let (dev, subvol) = match src.split_once('[') {
+        Some((d, rest)) => (d, rest.trim_end_matches(']').trim_start_matches('/')),
+        None => return Finding::new(Level::Skip, "/ is not a btrfs subvolume"),
+    };
+
+    let peek = std::path::Path::new("/run/kiwami-peek");
+    let _ = fs::create_dir_all(peek);
+    let opts = format!("ro,subvol={subvol}");
+    let mounted = std::process::Command::new("mount")
+        .args(["-o", &opts, dev, &peek.to_string_lossy()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !mounted {
+        let _ = fs::remove_dir(peek);
+        return Finding::new(Level::Skip, "could not mount the root subvolume to look");
+    }
+
+    let mut hidden: Vec<String> = Vec::new();
+    for p in &paths {
+        let under = peek.join(p.trim_start_matches('/'));
+        let n = fs::read_dir(&under).map(|d| d.count()).unwrap_or(0);
+        if n > 0 {
+            hidden.push(format!("{p}  ({n} entries underneath)"));
+        }
+    }
+
+    let _ = std::process::Command::new("umount").arg(peek).status();
+    let _ = fs::remove_dir(peek);
+
+    if hidden.is_empty() {
+        return Finding::new(Level::Ok, "nothing hidden under the persist mounts");
+    }
+    hidden.sort();
+    Finding::new(
+        Level::Warn,
+        format!("{} persisted paths have files hidden underneath", hidden.len()),
+    )
+    .detail(hidden.join("\n"))
+    .remedy(
+        "those files were written before the path was persisted and go at the next boot. \
+         To keep them: mount -o ro,subvol=<root> <dev> /mnt-peek, then copy them out",
+    )
+}
+
 // --- driver --------------------------------------------------------------
 
 pub fn run() -> Result<(), ()> {
@@ -921,7 +1020,7 @@ pub fn run() -> Result<(), ()> {
             shell_unit(),
             theme_applied(),
         ]),
-        ("hygiene", vec![generations(), commit_drift(), lock_age(), hardware_drift(), root_was_wiped(), password_is_declarative(), unpersisted_state()]),
+        ("hygiene", vec![generations(), commit_drift(), lock_age(), hardware_drift(), root_was_wiped(), password_is_declarative(), unpersisted_state(), shadowed_by_persistence()]),
     ];
 
     let mut fails = 0;
