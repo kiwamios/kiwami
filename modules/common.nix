@@ -119,6 +119,10 @@
     ".ssh"
     ".local/state"
     "Projects"
+    # Wallpapers live here, and the root is wiped at every boot: without this
+    # you copy photographs in, set one, and find an empty directory in the
+    # morning with no error anywhere to explain it.
+    "Pictures"
   ];
 
   # gh's token, and deliberately nothing else from that directory. config.yml

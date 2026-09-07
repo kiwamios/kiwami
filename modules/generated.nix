@@ -73,6 +73,24 @@ in
       host = if cfg.host == "" then config.networking.hostName else cfg.host;
     };
 
+    # Where the wallpaper comes from and how it behaves. The directory is
+    # resolved to an absolute path here: QML has no notion of ~.
+    "kiwami/wallpaper.json".text = builtins.toJSON {
+      inherit (cfg.wallpaper) enable rotate interval fit;
+      directory =
+        if cfg.wallpaper.directory != ""
+        then cfg.wallpaper.directory
+        else "/home/${cfg.user}/Pictures/wallpapers";
+      # Shown when the directory is empty or missing, so a machine that has
+      # just been installed has a desktop rather than a black rectangle.
+      fallback = "/etc/kiwami/wallpaper-default.svg";
+    };
+
+    # SVG rather than a photograph: a few hundred bytes that scale to any
+    # screen, instead of a binary blob in a git repository that everyone who
+    # clones this has to download forever.
+    "kiwami/wallpaper-default.svg".source = ../config/wallpaper/default.svg;
+
     "kiwami/shell".source = ../shell;
 
     # Ours, a real Ghostty file rather than generated - same treatment as the

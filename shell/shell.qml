@@ -15,6 +15,20 @@ ShellRoot {
         }
     }
 
+    // One per screen, like the bar. A Loader for the same reason: a broken
+    // Wallpaper.qml should cost you the wallpaper, not the desktop.
+    Variants {
+        model: Quickshell.screens
+        Loader {
+            required property var modelData
+            Component.onCompleted: setSource("Wallpaper.qml", { modelData: modelData })
+            onStatusChanged: {
+                if (status === Loader.Error)
+                    console.warn("shell: Wallpaper failed to load - no wallpaper this session");
+            }
+        }
+    }
+
     Variants {
         model: Quickshell.screens
         Loader {

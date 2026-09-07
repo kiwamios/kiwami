@@ -16,6 +16,29 @@ Singleton {
 
     property var bar: fallback
 
+    readonly property var wallpaperFallback: ({
+        enable: true, directory: "", rotate: false, interval: 900,
+        fit: "cover", fallback: "/etc/kiwami/wallpaper-default.svg"
+    })
+
+    property var wallpaper: wallpaperFallback
+
+    FileView {
+        id: paper
+        path: "/etc/kiwami/wallpaper.json"
+        watchChanges: true
+        onFileChanged: reload()
+        onLoadFailed: root.wallpaper = root.wallpaperFallback
+        onLoaded: {
+            try {
+                root.wallpaper = JSON.parse(paper.text());
+            } catch (e) {
+                console.warn("wallpaper.json unreadable, using defaults:", e);
+                root.wallpaper = root.wallpaperFallback;
+            }
+        }
+    }
+
     FileView {
         id: file
         path: "/etc/kiwami/bar.json"

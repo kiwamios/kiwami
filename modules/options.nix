@@ -85,6 +85,61 @@ in
       '';
     };
 
+    wallpaper = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Draw a wallpaper on the background layer of every screen.";
+      };
+
+      directory = mkOption {
+        type = types.str;
+        default = "";
+        example = "/home/alice/Pictures/wallpapers";
+        description = ''
+          Where the images live. Empty means ~/Pictures/wallpapers for
+          kiwami.user.
+
+          Deliberately outside the flake. Wallpapers are photographs - you
+          crop them, you send them from a phone, you look through them to
+          pick one. Putting them in the store would mean a rebuild to change
+          a picture, and a git repository that grows by megabytes a time.
+
+          Note this directory has to be persisted, or an ephemeral root
+          deletes it overnight. Kiwami persists ~/Pictures for that reason.
+        '';
+      };
+
+      rotate = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Cycle through the images. With one image, or with this off, the
+          first image by filename is shown and nothing changes.
+
+          Sorted by filename rather than taken in directory order, which
+          varies by filesystem: "first" has to mean the same thing on your
+          laptop as it does in a test VM.
+        '';
+      };
+
+      interval = mkOption {
+        type = types.ints.positive;
+        default = 900;
+        description = "Seconds between images, when rotating.";
+      };
+
+      fit = mkOption {
+        type = types.enum [ "cover" "contain" "fill" "tile" ];
+        default = "cover";
+        description = ''
+          How an image fills a screen it does not match. `cover` crops to
+          fill, `contain` fits the whole image and leaves bars, `fill`
+          stretches, `tile` repeats.
+        '';
+      };
+    };
+
     user = mkOption {
       type = types.strMatching "[a-z_][a-z0-9_-]*";
       default = "nixos";
