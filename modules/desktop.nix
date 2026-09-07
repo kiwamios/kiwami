@@ -42,7 +42,23 @@ in
     settings = {
       # The greeter. Asks who you are, then starts the session as them.
       default_session = {
-        command = "${pkgs.tuigreet}/bin/tuigreet --time --remember --cmd '${session}'";
+        # --user-menu because a login prompt that wants a username typed from
+        # memory is a login prompt that assumes you know what the accounts on
+        # this machine are called. They are declared in the flake; the greeter
+        # can just list them.
+        #
+        # --asterisks so a password that is not being received looks different
+        # from one that is - on a machine that boots straight to this, silence
+        # while typing reads as a wedged greeter.
+        command = lib.concatStringsSep " " [
+          "${pkgs.tuigreet}/bin/tuigreet"
+          "--time"
+          "--remember"
+          "--user-menu"
+          "--asterisks"
+          "--greeting '${config.kiwami.greeting}'"
+          "--cmd '${session}'"
+        ];
         user = "greeter";
       };
     }

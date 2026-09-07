@@ -28,6 +28,11 @@
   # supported mode - converting these is follow-up work.
   kiwami.ephemeralRoot = false;
 
+  # No splash on the test machines. Their console is how the harness knows
+  # what happened, and a boot that looks nice to nobody is worth less than a
+  # test that can read it.
+  kiwami.splash.enable = false;
+
   kiwami.flake = "github:kiwamios/kiwami";
   networking.hostName = "kiwami-luks";
 

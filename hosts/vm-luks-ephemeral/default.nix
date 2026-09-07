@@ -42,6 +42,11 @@
   # catch.
   kiwami.rootDevice = "/dev/mapper/cryptroot";
 
+  # No splash on the test machines. Their console is how the harness knows
+  # what happened, and a boot that looks nice to nobody is worth less than a
+  # test that can read it.
+  kiwami.splash.enable = false;
+
   kiwami.flake = "github:kiwamios/kiwami";
   networking.hostName = "kiwami-luks-ephemeral";
 

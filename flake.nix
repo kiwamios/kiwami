@@ -346,6 +346,7 @@
       nixosModules.default = { config, lib, ... }: {
         imports = [
           home-manager.nixosModules.home-manager
+          ./modules/boot.nix
           ./modules/common.nix
           ./modules/desktop.nix
           ./modules/options.nix

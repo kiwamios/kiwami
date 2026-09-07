@@ -1,0 +1,15 @@
+<!-- The mark shown while the machine boots.
+
+     Pure geometry, no text: rendering a glyph would drag fontconfig and a CJK
+     font into the build just to draw one character, and the initrd is the one
+     place where every megabyte is somebody's boot time.
+
+     A ring with a gap - 極 means "the extreme", the far edge of something. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <g fill="none" stroke="#c0caf5" stroke-linecap="round">
+    <circle cx="128" cy="128" r="86" stroke-width="10" stroke-opacity="0.28"/>
+    <path d="M 128 42 A 86 86 0 0 1 214 128" stroke-width="10" stroke-opacity="0.95"/>
+    <path d="M 128 96 L 128 160" stroke-width="12" stroke-opacity="0.95"/>
+    <path d="M 100 128 L 156 128" stroke-width="12" stroke-opacity="0.55"/>
+  </g>
+</svg>

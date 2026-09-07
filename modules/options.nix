@@ -147,6 +147,38 @@ in
       };
     };
 
+    greeting = mkOption {
+      type = types.str;
+      default = "kiwami";
+      description = "The line the greeter shows above the prompt.";
+    };
+
+    splash = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Replace the boot log with a splash, and draw the disk passphrase
+          prompt inside it rather than on a bare console.
+
+          Presentation only. Turned off you get the kernel and systemd output
+          back, which is what you want the morning something fails before the
+          desktop exists - so it is a switch rather than something to comment
+          out.
+        '';
+      };
+
+      theme = mkOption {
+        type = types.str;
+        default = "spinner";
+        description = ''
+          A Plymouth theme name. The default draws Kiwami's mark with a
+          spinner beneath it; set kiwami.splash.logo to change the mark
+          without leaving the theme.
+        '';
+      };
+    };
+
     user = mkOption {
       type = types.strMatching "[a-z_][a-z0-9_-]*";
       default = "nixos";
