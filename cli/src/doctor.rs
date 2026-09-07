@@ -995,7 +995,12 @@ fn shadowed_by_persistence() -> Finding {
     hidden.sort();
     Finding::new(
         Level::Warn,
-        format!("{} persisted paths have files hidden underneath", hidden.len()),
+        format!(
+            "{} persisted path{} {} files hidden underneath",
+            hidden.len(),
+            if hidden.len() == 1 { "" } else { "s" },
+            if hidden.len() == 1 { "has" } else { "have" }
+        ),
     )
     .detail(hidden.join("\n"))
     .remedy(
