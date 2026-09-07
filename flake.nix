@@ -339,6 +339,18 @@
         installerFallback = system: mkInstaller { inherit system; };
       };
 
+      # A repository to keep your own machines in.
+      #
+      #   nix flake init -t github:kiwamios/kiwami
+      #
+      # It lives in this repository rather than in documentation so that it is
+      # evaluated with everything else: if mkHost changes shape, the template
+      # breaks here, in a build, rather than in a stranger's first hour.
+      templates.default = {
+        path = ./template;
+        description = "A repository describing your machines, built from Kiwami";
+      };
+
       # The distro as an importable module, so a machine can be built from
       # Kiwami without forking it. Deliberately excludes anything
       # host-specific - hardware, hostname, users - which the consumer

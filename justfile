@@ -78,7 +78,7 @@ lint:
       exit $rc
 
 # Everything that can be verified without a Linux builder.
-check: lint host-push-test eval
+check: lint host-push-test eval template-test
 
 # `kiwami host push` sends the host directory and nothing else. Needs only git
 # and the built CLI, so it belongs here rather than in the VM matrix.
@@ -93,3 +93,38 @@ flash ISO NAME="Portable SSD T5":
 # Show repo layout, ignoring build artifacts
 tree:
     @git ls-files
+
+# The template a stranger starts from, instantiated and evaluated.
+#
+# It exists so somebody with no configuration repository has one command
+# rather than a page of instructions - which only holds if it still works.
+# Living in this repository is what makes that checkable: if mkHost or the
+# option surface changes shape, this fails here rather than in a stranger's
+# first hour.
+template-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v nix >/dev/null || export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+
+    repo=$PWD
+    dir=$(mktemp -d)
+    trap 'rm -rf "$dir"' EXIT
+    cd "$dir"
+
+    printf '  %-14s ' "template"
+    if ! err=$(nix flake init -t "$repo" 2>&1 >/dev/null); then
+      echo FAIL; echo "$err" >&2; exit 1
+    fi
+    # A git tree, because nix reads flakes through git and an untracked file
+    # is invisible to it - the trap that hid config/wallpaper from the build.
+    git init -q . && git add -A
+
+    # Against this checkout rather than what is on GitHub: the point is to
+    # catch a change before it is pushed, not after.
+    if err=$(nix eval --override-input kiwami "$repo" \
+               --raw '.#nixosConfigurations.example.config.system.build.toplevel.drvPath' \
+               2>&1 >/dev/null); then
+      echo ok
+    else
+      echo FAIL; echo "$err" >&2; exit 1
+    fi
