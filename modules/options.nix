@@ -147,6 +147,21 @@ in
       };
     };
 
+    greeter = mkOption {
+      type = types.enum [ "graphical" "tui" ];
+      default = "graphical";
+      description = ''
+        Which greeter asks who you are.
+
+        `graphical` is ReGreet: a real window with the accounts listed, the
+        wallpaper behind it, and Kiwami's palette. `tui` is tuigreet, a text
+        prompt on a console - smaller, and the thing to fall back to on a
+        machine whose graphics are not cooperating.
+
+        Neither is used when kiwami.autoLogin is on, since nothing is asked.
+      '';
+    };
+
     greeting = mkOption {
       type = types.str;
       default = "kiwami";

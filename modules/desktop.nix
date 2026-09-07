@@ -5,6 +5,22 @@ let
   # One definition, used by the greeter and by the autologin path, so they
   # cannot start the session two different ways.
   session = "${pkgs.uwsm}/bin/uwsm start -F -- /run/current-system/sw/bin/Hyprland";
+
+  # The palette the machine was built with. The greeter runs before any user
+  # session exists, so it cannot follow `kiwami theme set` - it follows the
+  # theme in the flake, which is the only one that exists at that point.
+  palette = config.kiwami.theme.themes.${config.kiwami.theme.name};
+
+  # The wallpaper behind the greeter.
+  #
+  # Kiwami's shipped default rather than the user's own: the greeter runs as
+  # the `greeter` account, which has no business reading anybody's home
+  # directory - and on an ephemeral root that directory is not mounted yet
+  # either. Rasterised at build time because GTK wants a picture.
+  greeterBackground = pkgs.runCommand "kiwami-greeter-bg.png" { } ''
+    ${pkgs.librsvg}/bin/rsvg-convert -w 2560 -h 1600 \
+      ${../config/wallpaper/default.svg} -o $out
+  '';
 in
 
 {
@@ -37,11 +53,67 @@ in
   # hyprland-uwsm.desktop carries; Hyprland warns that it was not started via
   # start-hyprland, which is expected on this path - start-hyprland does its
   # own session setup and would fight UWSM for it.
+  # ReGreet: the greeter as a window rather than a console.
+  #
+  # It sets services.greetd.settings.default_session itself, which is why the
+  # tuigreet block above is conditional - two modules writing that one setting
+  # is a conflict, not a fallback.
+  #
+  # Deliberately not a Quickshell greeter, for now. greetd's protocol is JSON
+  # behind a binary length prefix, which is miserable to parse in QML, and a
+  # greeter that crashes is a machine nobody can log into. ReGreet is somebody
+  # else's tested code doing the part where being wrong locks you out.
+  programs.regreet = lib.mkIf (config.kiwami.greeter == "graphical") {
+    enable = true;
+
+    settings = {
+      background = {
+        path = greeterBackground;
+        fit = "Cover";
+      };
+      GTK.application_prefer_dark_theme = true;
+      appearance.greeting_msg = config.kiwami.greeting;
+    };
+
+    # The palette, applied to somebody else's widgets.
+    #
+    # Generated from kiwami.theme rather than written out, so the greeter
+    # follows the theme the machine was built with instead of being a second
+    # place colours are decided. It cannot follow `kiwami theme set` - that
+    # switches at runtime and this is chosen before any user session exists.
+    extraCss = ''
+      window {
+        background-color: ${palette.background};
+        color: ${palette.foreground};
+      }
+      .background { background-color: transparent; }
+      box.horizontal > button, entry, .linked > button {
+        background-color: ${palette.surface};
+        color: ${palette.foreground};
+        border: 1px solid ${palette.lighterBackground};
+        border-radius: 8px;
+      }
+      entry:focus, button:focus {
+        border-color: ${palette.accent};
+        box-shadow: none;
+      }
+      button:hover { background-color: ${palette.lighterBackground}; }
+      button.suggested-action {
+        background-color: ${palette.accent};
+        color: ${palette.darkBackground};
+        border-color: ${palette.accent};
+      }
+      label { color: ${palette.foreground}; }
+      /* The clock and greeting, which should recede rather than shout. */
+      label.title-1, label.title-2 { color: ${palette.lightForeground}; }
+    '';
+  };
+
   services.greetd = {
     enable = true;
     settings = {
       # The greeter. Asks who you are, then starts the session as them.
-      default_session = {
+      default_session = lib.mkIf (config.kiwami.greeter == "tui") {
         # --user-menu because a login prompt that wants a username typed from
         # memory is a login prompt that assumes you know what the accounts on
         # this machine are called. They are declared in the flake; the greeter
