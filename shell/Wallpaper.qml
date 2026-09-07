@@ -35,6 +35,36 @@ PanelWindow {
     readonly property string current:
         images.length > 0 ? images[index % images.length] : conf.fallback
 
+    // The one file that says which image is showing.
+    //
+    // Both this and `kiwami wallpaper set` write it, and both watch it, so
+    // picking a wallpaper from a terminal is instant and rotation survives a
+    // shell restart instead of snapping back to the first image. Two writers
+    // are fine because there is only ever one value; what would not be fine
+    // is two files.
+    FileView {
+        id: chosen
+        path: root.conf.state || ""
+        watchChanges: true
+        atomicWrites: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            const name = text().trim();
+            if (name.length === 0) return;
+            const at = root.images.findIndex(p => p.split("/").pop() === name);
+            // Ignoring our own write, which would otherwise bounce straight
+            // back and re-trigger the crossfade.
+            if (at >= 0 && at !== root.index) root.index = at;
+        }
+    }
+
+    function remember() {
+        if (!conf.state || images.length === 0) return;
+        const name = current.split("/").pop();
+        if (chosen.text().trim() !== name) chosen.setText(name);
+    }
+
     function fillMode() {
         switch (conf.fit) {
         case "contain": return Image.PreserveAspectFit;
@@ -91,6 +121,7 @@ PanelWindow {
     onCurrentChanged: {
         if (showA) b.path = current; else a.path = current;
         showA = !showA;
+        remember();
     }
 
     component Layer: Item {

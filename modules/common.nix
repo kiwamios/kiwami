@@ -119,10 +119,14 @@
     ".ssh"
     ".local/state"
     "Projects"
-    # Wallpapers live here, and the root is wiped at every boot: without this
-    # you copy photographs in, set one, and find an empty directory in the
+    # Wallpapers live under here, and the root is wiped at every boot:
+    # without this you add one, set it, and find an empty directory in the
     # morning with no error anywhere to explain it.
-    "Pictures"
+    #
+    # Kiwami's own directory rather than ~/Pictures, which is load-bearing
+    # for other things: persisting that would drag a whole photo library
+    # into /persist, and from there into every backup.
+    ".local/share/kiwami"
   ];
 
   # gh's token, and deliberately nothing else from that directory. config.yml

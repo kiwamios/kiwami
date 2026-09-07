@@ -95,18 +95,25 @@ in
       directory = mkOption {
         type = types.str;
         default = "";
-        example = "/home/alice/Pictures/wallpapers";
+        example = "/home/alice/wallpapers";
         description = ''
-          Where the images live. Empty means ~/Pictures/wallpapers for
-          kiwami.user.
+          Where the images live. Empty means
+          ~/.local/share/kiwami/wallpapers for kiwami.user.
 
-          Deliberately outside the flake. Wallpapers are photographs - you
-          crop them, you send them from a phone, you look through them to
-          pick one. Putting them in the store would mean a rebuild to change
-          a picture, and a git repository that grows by megabytes a time.
+          Deliberately outside the flake. Wallpapers are pictures - you add
+          one, you look through them to pick one. Putting them in the store
+          would mean a rebuild to change a picture, and a git repository that
+          grows by megabytes a time.
 
-          Note this directory has to be persisted, or an ephemeral root
-          deletes it overnight. Kiwami persists ~/Pictures for that reason.
+          Also deliberately not ~/Pictures. That directory is load-bearing
+          for other things - a photo library, a screenshot folder - and it
+          has to be persisted for wallpapers to survive a boot, which would
+          drag an entire photo library into /persist and therefore into
+          every backup. A directory Kiwami owns can be persisted without
+          deciding anything about the rest of your pictures.
+
+          Whatever you set has to be persisted, or an ephemeral root deletes
+          it overnight. The default is.
         '';
       };
 

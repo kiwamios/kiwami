@@ -80,10 +80,14 @@ in
       directory =
         if cfg.wallpaper.directory != ""
         then cfg.wallpaper.directory
-        else "/home/${cfg.user}/Pictures/wallpapers";
+        else "/home/${cfg.user}/.local/share/kiwami/wallpapers";
       # Shown when the directory is empty or missing, so a machine that has
       # just been installed has a desktop rather than a black rectangle.
       fallback = "/etc/kiwami/wallpaper-default.svg";
+      # Which image is showing. Written by whoever changes it - the shell as
+      # it rotates, `kiwami wallpaper set` when you pick one - and read by the
+      # other. One file so the two cannot disagree.
+      state = "/home/${cfg.user}/.local/state/kiwami/wallpaper";
     };
 
     # SVG rather than a photograph: a few hundred bytes that scale to any

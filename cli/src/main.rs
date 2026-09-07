@@ -8,6 +8,7 @@ mod nix;
 mod remote;
 mod passwd;
 mod snapshot;
+mod wallpaper;
 mod paths;
 mod theme;
 mod update;
@@ -110,6 +111,11 @@ enum Cmd {
         out: String,
     },
     /// Back /persist up, and put it back
+    /// The pictures behind everything, and which one is showing
+    Wallpaper {
+        #[command(subcommand)]
+        action: WallpaperCmd,
+    },
     Snapshot {
         #[command(subcommand)]
         action: SnapshotCmd,
@@ -131,6 +137,31 @@ enum Cmd {
 enum AuthCmd {
     /// Log in to whatever is missing, one at a time
     Login,
+}
+
+#[derive(Subcommand)]
+enum WallpaperCmd {
+    /// What is there, and which one is showing
+    List,
+    /// Fetch a URL or copy a file into the wallpaper directory
+    Add {
+        /// A URL or a path
+        source: String,
+        /// Show it straight away
+        #[arg(long)]
+        set: bool,
+    },
+    /// Show one now. No rebuild.
+    Set {
+        /// Its name, or enough of it to be unambiguous
+        which: String,
+    },
+    /// Move to the next one, in the order they rotate
+    Next,
+    /// Delete one
+    Remove {
+        which: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -265,6 +296,19 @@ fn main() -> std::process::ExitCode {
         Cmd::Image { host, out } => {
             if let Err(e) = update::image(host, out) {
                 eprintln!("image: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+        Cmd::Wallpaper { action } => {
+            let r = match action {
+                WallpaperCmd::List => wallpaper::list(),
+                WallpaperCmd::Add { source, set } => wallpaper::add(source, set),
+                WallpaperCmd::Set { which } => wallpaper::set(which),
+                WallpaperCmd::Next => wallpaper::next(),
+                WallpaperCmd::Remove { which } => wallpaper::remove(which),
+            };
+            if let Err(e) = r {
+                eprintln!("wallpaper: {e}");
                 return std::process::ExitCode::FAILURE;
             }
         }
