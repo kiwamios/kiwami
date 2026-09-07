@@ -103,9 +103,27 @@ if ssh_ true; then
     && ok "the persist marker survived" || no "the persist marker survived"
   ssh_ 'findmnt -no SOURCE /var/lib/nixos | grep -q persist' \
     && ok "declared state is bound back after the wipe" || no "declared state is bound back after the wipe"
+
+  # The password after a boot, which is not the same question as the password
+  # after a rebuild.
+  #
+  # Activation runs in the initrd, before the bind mounts exist. The hash was
+  # named by its runtime path - /var/lib/kiwami/passwords - which at that
+  # moment is an empty directory on the bare root, so the seed fired every
+  # boot and the install default went into /etc/shadow. The machine's password
+  # was the one published in this repository until something re-ran
+  # activation, and the owner's own password was refused at the greeter.
+  #
+  # Nothing caught it because every check ran on a machine that had just been
+  # rebuilt, where activation had run with the mounts present and the hash was
+  # correct. Only a plain reboot shows it - which is why this lives here.
+  ssh_ 'getent shadow $(id -un) | grep -q kiwamidefault' \
+    && no "a booted machine does not fall back to the install password" \
+    || ok "a booted machine does not fall back to the install password"
 else
   no "it came back after the reboot"
   no "the wipe could not be checked - the machine never came up"
+  no "the password could not be checked - the machine never came up"
   echo "     last console output:"
   tail -c 1200 "$VM_DIR/serial.log" | tr '\r' '\n' | grep -v "^\s*$" | tail -8 | sed 's/^/     /'
 fi

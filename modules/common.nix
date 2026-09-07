@@ -1,6 +1,26 @@
 # Settings every Kiwami host gets, regardless of hardware.
 { config, lib, pkgs, inputs, ... }:
 
+let
+  # Where the hash is during *activation*, which is not where it is at
+  # runtime.
+  #
+  # Activation runs in the initrd, before the bind mounts that graft /persist
+  # into place. So /var/lib/kiwami/passwords - the runtime path - is an empty
+  # directory on the bare root at the moment the account is created, and
+  # naming it there meant the seed below fired every boot and the default hash
+  # went into /etc/shadow. Until something re-ran activation, the machine's
+  # password was the one published in this repository, and the owner's own
+  # password was rejected.
+  #
+  # /persist is neededForBoot, so it is mounted by then. Naming the file
+  # through /persist makes it the same file at both moments - the bind mount
+  # just gives it a second name later - and there is exactly one copy.
+  passwordDir =
+    if config.kiwami.ephemeralRoot
+    then "/persist${config.kiwami.passwordFile}"
+    else config.kiwami.passwordFile;
+in
 {
   nix.settings = {
     experimental-features = [ "nix-command" "flakes" ];
@@ -29,12 +49,12 @@
   system.activationScripts.kiwamiPassword = {
     deps = [ "specialfs" ];
     text = ''
-      mkdir -p ${config.kiwami.passwordFile}
-      chmod 700 ${config.kiwami.passwordFile}
-      if [ ! -s ${config.kiwami.passwordFile}/${config.kiwami.user} ]; then
+      mkdir -p ${passwordDir}
+      chmod 700 ${passwordDir}
+      if [ ! -s ${passwordDir}/${config.kiwami.user} ]; then
         echo '$6$kiwamidefault$RHqPdZfAbfcBgynCC4GyrLHRK4DT0IXCI6QwVxObCgTY9Ky6dUSfFpyhBLvBuTozVnGeXnNSczef4HvLQPy1U1' \
-          > ${config.kiwami.passwordFile}/${config.kiwami.user}
-        chmod 600 ${config.kiwami.passwordFile}/${config.kiwami.user}
+          > ${passwordDir}/${config.kiwami.user}
+        chmod 600 ${passwordDir}/${config.kiwami.user}
       fi
     '';
   };
@@ -46,7 +66,7 @@
     # Written by `kiwami install`, changed by `kiwami passwd`. Without it the
     # account has no password at all - and with immutable users there is no
     # initialPassword fallback, so that is discovered at a greeter.
-    hashedPasswordFile = "${config.kiwami.passwordFile}/${config.kiwami.user}";
+    hashedPasswordFile = "${passwordDir}/${config.kiwami.user}";
   };
   security.sudo.wheelNeedsPassword = false;
 
