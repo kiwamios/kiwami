@@ -150,12 +150,22 @@ PanelWindow {
                     // the same thing on a laptop and in a test VM.
                     .sort();
 
-                // Rotation restarts rather than jumping: if the picture you
-                // were on is still there, stay on it.
+                // The index before the list, not after.
+                //
+                // Assigning images first left one frame where the list was
+                // full and the index was still zero, so `current` became the
+                // first picture - which crossfaded to it, wrote it to the
+                // state file, and only then corrected itself. What you saw was
+                // the wallpaper you chose, a blink of the first one, and then
+                // yours again; what the state file kept was the wrong one.
+                //
+                // Setting the index while the list is still empty changes
+                // nothing on screen, because `current` falls back to the
+                // remembered name until there are images to index into.
                 const was = root.current;
-                root.images = found;
                 const still = found.indexOf(was);
                 if (still >= 0) root.index = still;
+                root.images = found;
             }
         }
     }
