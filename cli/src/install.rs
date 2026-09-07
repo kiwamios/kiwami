@@ -953,13 +953,10 @@ fn scaffold_host(host_dir: &Path, name: &str, flake: &str) -> Result<(), String>
   # conflict Nix only warns about, and the file wins - so the line would look
   # like it set the password while doing nothing.
 
-  home-manager.users.{user} = {{
-    imports = [
-      ../../modules/home/configs.nix
-      ../../modules/home/shell.nix
-    ];
-    home.stateVersion = "26.05";
-  }};
+  # When this machine was installed. Kiwami applies the desktop user's home
+  # configuration itself; this is the one part of it that belongs to the
+  # machine rather than to the distro.
+  home-manager.users.{user}.home.stateVersion = "26.05";
 
   system.stateVersion = "26.05";
 }}

@@ -343,7 +343,7 @@
       # Kiwami without forking it. Deliberately excludes anything
       # host-specific - hardware, hostname, users - which the consumer
       # supplies alongside it.
-      nixosModules.default = { lib, ... }: {
+      nixosModules.default = { config, lib, ... }: {
         imports = [
           home-manager.nixosModules.home-manager
           ./modules/common.nix
@@ -364,6 +364,23 @@
         home-manager.useGlobalPkgs = lib.mkDefault true;
         home-manager.useUserPackages = lib.mkDefault true;
         home-manager.extraSpecialArgs = { inherit inputs; };
+
+        # The desktop user's home configuration, applied by the distro rather
+        # than imported by each host.
+        #
+        # Every host used to carry `../../modules/home/configs.nix` - a
+        # relative path into this repository, which resolves only for a host
+        # that lives inside it. The moment hosts moved to their own flake the
+        # path pointed at nothing, and the machine could not be built at all.
+        # It was boilerplate repeated in six files that also happened to be
+        # the one line making the module non-portable.
+        #
+        # home.stateVersion stays with the host: it is a fact about when that
+        # particular machine was installed, not a choice this distro makes.
+        home-manager.users.${config.kiwami.user}.imports = [
+          ./modules/home/configs.nix
+          ./modules/home/shell.nix
+        ];
       };
 
       nixosConfigurations =

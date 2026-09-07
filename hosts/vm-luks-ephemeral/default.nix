@@ -21,10 +21,6 @@
   ];
 
   home-manager.users.nixos = {
-    imports = [
-      ../../modules/home/configs.nix
-      ../../modules/home/shell.nix
-    ];
     home.stateVersion = "26.05";
   };
 
