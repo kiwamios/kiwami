@@ -192,22 +192,54 @@ fn free_path(dir: &Path, base: &str) -> PathBuf {
 
 /// Is this actually an image, and one Qt here can read?
 ///
-/// `file` rather than trusting the extension: a download that 404'd into an
+/// By its first bytes rather than its name. A download that 404'd into an
 /// HTML error page is still called .jpg, and would sit in the directory
-/// looking like a wallpaper that simply never shows up.
+/// looking like a wallpaper that simply never shows up - the failure is at
+/// paint time, where nothing is reported.
+///
+/// Deliberately not file(1): that is not in the closure, and shelling out to
+/// a tool the machine may not have is how a check becomes an error message
+/// about the checker.
 fn looks_like_an_image(p: &Path) -> Result<(), String> {
-    if fs::metadata(p).map(|m| m.len()).unwrap_or(0) == 0 {
+    let bytes = fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?;
+    if bytes.is_empty() {
         return Err("that produced an empty file".into());
     }
-    let out = Command::new("file")
-        .args(["-b", "--mime-type", &p.to_string_lossy()])
-        .output()
-        .map_err(|e| format!("file: {e}"))?;
-    let mime = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if mime.starts_with("image/") || mime.contains("svg") || mime == "text/xml" {
+    if kind(&bytes).is_some() {
         return Ok(());
     }
-    Err(format!("that is {mime}, not an image"))
+    // Long enough to recognise, short enough not to paste a page of HTML.
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(40)]);
+    Err(format!(
+        "that is not an image this machine can show (starts with {:?})",
+        head.trim()
+    ))
+}
+
+/// The format, from the magic bytes. None means we cannot show it.
+fn kind(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        return Some("png");
+    }
+    if b.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Some("jpeg");
+    }
+    if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        return Some("gif");
+    }
+    if b.starts_with(b"BM") {
+        return Some("bmp");
+    }
+    // SVG is text, and may open with a comment, a doctype or a declaration
+    // before the tag - so it is a search rather than a prefix.
+    let head = String::from_utf8_lossy(&b[..b.len().min(1024)]);
+    if head.contains("<svg") {
+        return Some("svg");
+    }
+    // Recognised on purpose, to refuse it with a reason: RIFF....WEBP is a
+    // perfectly good image that this Qt has no plugin for, so accepting it
+    // would mean saving a file that can never be displayed.
+    None
 }
 
 pub fn set(which: String) -> Result<(), String> {
@@ -317,8 +349,26 @@ mod tests {
         assert!(n.trim_end_matches(".jpg").chars().all(|c| c.is_ascii_digit()), "{n}");
     }
 
+    /// The bug this replaces a shell-out for: a 404 page saved as .jpg.
+    #[test]
+    fn an_html_error_page_is_not_an_image() {
+        assert!(kind(b"<!DOCTYPE html><html><body>404").is_none());
+        assert!(kind(b"").is_none());
+    }
+
+    #[test]
+    fn real_headers_are_recognised() {
+        assert_eq!(kind(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0]), Some("png"));
+        assert_eq!(kind(&[0xff, 0xd8, 0xff, 0xe0]), Some("jpeg"));
+        assert_eq!(kind(b"GIF89a....."), Some("gif"));
+        assert_eq!(kind(b"<?xml version=\"1.0\"?><svg xmlns=\"...\">"), Some("svg"));
+    }
+
+    /// A real image, and still refused: there is no webp plugin in the
+    /// closure, so it could only ever be a file that never appears.
     #[test]
     fn webp_is_not_accepted_because_qt_here_cannot_show_it() {
+        assert!(kind(b"RIFF\x00\x00\x00\x00WEBPVP8 ").is_none());
         assert!(!readable(Path::new("a.webp")));
         assert!(readable(Path::new("a.PNG")), "extensions are not case sensitive");
     }
