@@ -277,8 +277,17 @@ pub fn run_install(opts: Options) -> Result<(), String> {
     // cheap eval - `builtins.attrNames` does not force the configurations -
     // and it is the difference between "unknown host" and "unknown host,
     // reported after your disk was erased".
-    println!("==> resolving {}", opts.flake);
     let mut flake = opts.flake.clone();
+
+    // Kiwami's own repository describes the test machines and nothing else, so
+    // installing from it offers a menu of vm-* fixtures and a "new machine"
+    // that cannot be saved anywhere. Asked here, before anything is resolved,
+    // so the menu that follows is of your machines.
+    if is_distro(&flake) {
+        flake = ask_for_machines_repo(opts.assume_yes)?;
+    }
+
+    println!("==> resolving {flake}");
     let mut checkout = local_checkout(&flake);
 
     // Whether a new machine is possible, not whether it is possible yet. The
@@ -990,6 +999,62 @@ fn git_add(repo: &Path, what: &Path) -> Result<(), String> {
 /// A local path we can write into, or nothing. `github:...` and friends are
 /// fetched read-only into the store, so a generated file cannot be added to
 /// them - that is why installing a new machine needs a clone.
+/// The distro's own repository, which is never where your machines live.
+///
+/// Kiwami is an input: a machine's configuration lives in a repository its
+/// owner controls, and this one is not it. Before the split these were the
+/// same repository and cloning it made sense; afterwards, installing a new
+/// machine "from Kiwami" means scaffolding a host into somebody else's
+/// project, which cannot be pushed and leaves the machine unable to update
+/// itself.
+const DISTRO: &str = "github:kiwamios/kiwami";
+
+fn is_distro(flake: &str) -> bool {
+    let f = flake.trim_end_matches('/');
+    f == DISTRO || f.starts_with(&format!("{DISTRO}/")) || f == "https://github.com/kiwamios/kiwami"
+}
+
+/// Ask where this person's machines are described.
+///
+/// Asked before the disk is touched, not at push time. Discovering that the
+/// host had nowhere to go used to happen at the very end, after the layout
+/// had been designed and the hardware detected into a clone that was then
+/// thrown away.
+fn ask_for_machines_repo(assume_yes: bool) -> Result<String, String> {
+    if assume_yes {
+        return Err(format!(
+            "{DISTRO} is the distro, not a place to keep machines.\n\n\
+             Machines live in a repository you control, with Kiwami as an input:\n\n  \
+             nix flake init -t {DISTRO}\n\n\
+             Then install with --flake github:you/your-repo."
+        ));
+    }
+
+    println!("\n==> where are your machines described?");
+    println!("    {DISTRO} is the distro itself. Your machines live in a");
+    println!("    repository you control, with Kiwami as an input - so that");
+    println!("    updating one never touches the other.");
+    println!("\n    If you do not have one yet, on any machine with nix:");
+    println!("      nix flake init -t {DISTRO}");
+    println!("      # then push it to github, and come back");
+
+    for _ in 0..3 {
+        let answer = prompt("\nYour repository (github:you/your-repo): ")
+            .map_err(|e| e.to_string())?;
+        let answer = answer.trim().to_string();
+        if answer.is_empty() {
+            println!("    nothing typed.");
+            continue;
+        }
+        if is_distro(&answer) {
+            println!("    that is the distro again - it needs to be yours to write to.");
+            continue;
+        }
+        return Ok(answer);
+    }
+    Err("no repository given. Nothing has been written to the disk.".into())
+}
+
 fn local_checkout(flake: &str) -> Option<PathBuf> {
     let path = flake.strip_prefix("path:").unwrap_or(flake);
     if path.contains(':') {
@@ -2570,5 +2635,30 @@ Boot0006* Linux Boot Manager\tHD(1,GPT,5bd8c011-0071-4e4a-81e7-cb0a2186e763,0x80
             .map(|(id, _)| id)
             .collect();
         assert_eq!(doomed, ["0000", "0001", "0004", "0005"], "only the dead GPT entries");
+    }
+}
+
+#[cfg(test)]
+mod machines_repo_tests {
+    use super::*;
+
+    /// The distro is never a place to keep machines, however it is spelled.
+    #[test]
+    fn the_distro_is_recognised_in_its_usual_forms() {
+        assert!(is_distro("github:kiwamios/kiwami"));
+        assert!(is_distro("github:kiwamios/kiwami/"));
+        assert!(is_distro("github:kiwamios/kiwami/522099d"), "pinned to a commit");
+        assert!(is_distro("https://github.com/kiwamios/kiwami"));
+    }
+
+    /// Somebody else's repository is theirs, including one that merely looks
+    /// similar - the check must not swallow github:kiwamios/kiwami-hosts or a
+    /// fork, which are legitimate places for machines to live.
+    #[test]
+    fn other_repositories_are_not_the_distro() {
+        assert!(!is_distro("github:jimzer/kiwami-hosts"));
+        assert!(!is_distro("github:kiwamios/kiwami-hosts"));
+        assert!(!is_distro("github:alice/kiwami"));
+        assert!(!is_distro("/home/alice/my-machines"));
     }
 }

@@ -92,11 +92,37 @@ def digest(path):
     return h.hexdigest()
 
 
+def newer_than_iso():
+    """Source files changed since the image was built."""
+    if not ISO.exists():
+        return []
+    built = ISO.stat().st_mtime
+    root = VM_DIR.parent
+    watched = []
+    for sub in ("cli/src", "modules", "shell", "config"):
+        watched += list((root / sub).rglob("*"))
+    watched.append(root / "flake.nix")
+    return [f for f in watched if f.is_file() and f.stat().st_mtime > built]
+
+
 def boot():
     """A blank disk and a cold boot from the built image."""
     if not ISO.exists():
         print(f"no image at {ISO}\nrun: just vm build-iso")
         sys.exit(1)
+
+    # Which image this is testing, said out loud.
+    #
+    # An aarch64-linux ISO cannot be built on macOS, so it is built elsewhere
+    # and copied in - which means the one on disk can predate the code being
+    # changed, and a pass then belongs to whatever was in it rather than to
+    # the working tree. Not a failure and not worth blocking on; worth seeing.
+    stale = newer_than_iso()
+    built = time.strftime("%Y-%m-%d %H:%M", time.localtime(ISO.stat().st_mtime))
+    if stale:
+        print(f"  image built {built}; {len(stale)} source file(s) are newer")
+    else:
+        print(f"  image built {built}")
 
     (VM_DIR / "disks").mkdir(exist_ok=True)
     DISK.unlink(missing_ok=True)
@@ -148,10 +174,24 @@ def conversation():
         return before
     ok("it offers remote access")
 
-    if not reply(c, "n", "Machines this flake already describes", 180):
+    if not reply(c, "n", "where are your machines described", 180):
         no("declining remote access moves on", c.buf)
         return before
     ok("declining remote access moves on")
+
+    # The installer must not offer to put a new machine into Kiwami's own
+    # repository. That was the default until the repositories were split, and
+    # it produced a machine whose config had nowhere to be pushed and which
+    # could therefore never update itself - discovered at the end, after the
+    # hardware had been detected into a clone that was then thrown away.
+    #
+    # Answered with the org's worked example rather than anybody's personal
+    # machines, so the test clones something it is allowed to depend on.
+    if not reply(c, "github:kiwamios/example-machines",
+                 "Machines this flake already describes", 300):
+        no("it asks for a repository of your own before offering a new machine", c.buf)
+        return before
+    ok("it asks for a repository of your own before offering a new machine")
 
     # The menu offered "n) a new machine" and then refused n, and later
     # crashed on it. Both are asserted separately because they broke
