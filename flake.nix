@@ -63,6 +63,204 @@
       # nothing should have to edit this file to register them.
       hostNames = builtins.attrNames
         (nixpkgs.lib.filterAttrs (_: t: t == "directory") (builtins.readDir ./hosts));
+
+      # The harness key, present only in the -test images. A shipped
+      # installer must not carry a key from this repository; the test
+      # variant carries it so `vmssh` works and the whole installer matrix
+      # runs against the real image instead of being rewritten to drive a
+      # serial console.
+      # Missing is an error, not an empty list. A -test image whose entire
+      # purpose is carrying this key built happily without one, and the
+      # only symptom was ssh refusing a connection several minutes later.
+      harnessKey =
+        let f = ./vm/keys/kiwami_vm.pub;
+        in if builtins.pathExists f
+           then [ (builtins.readFile f) ]
+           else throw ''
+             installer-*-test needs vm/keys/kiwami_vm.pub, which is not in
+             this flake. Generate it with `just vm install`, and remember
+             that flakes only see git-tracked files.
+           '';
+
+      # An installer image carrying a host's entire built system.
+      #
+      # `nixos-install --system <path>` installs a prebuilt closure rather
+      # than evaluating a flake, so a machine can be rebuilt with no
+      # network at all: the 5.7 GiB it would otherwise download is already
+      # on the stick. What it does not carry is any state - no keys, no
+      # tokens, no wifi - so the image is not a bundle of secrets. It is
+      # still your configuration, which names your bucket and your
+      # hostname, so it is private rather than publishable.
+      #
+      # Deliberately not fresh-by-design: the image supplies the machine,
+      # `kiwami snapshot restore` supplies what has happened since. A
+      # months-old image still boots you into a working laptop.
+      mkInstaller = { system, testKey ? false, prebuilt ? null }:
+    nixpkgs.lib.nixosSystem {
+      specialArgs = { inherit inputs; };
+      modules = [
+        ({ modulesPath, pkgs, lib, ... }: {
+          imports = [ (modulesPath + "/installer/cd-dvd/installation-cd-minimal.nix") ];
+
+          nixpkgs.hostPlatform = system;
+
+          # The whole point: `kiwami install`, not a nix run incantation.
+          # git comes too - installing a new machine needs a writable
+          # checkout to generate hardware.nix into.
+          environment.systemPackages = [
+            self.packages.${system}.kiwami
+            pkgs.git
+            # `kiwami remote` drives this. Present but not started: joining
+            # a tailnet is an explicit act, not something live media should
+            # do on its own. It is also how the backup credentials reach
+            # this machine, by taildrop or scp, without anything long being
+            # typed.
+            pkgs.tailscale
+            # The installer offers to restore a previous machine's identity
+            # before the first boot, which is the thing that makes a
+            # reinstall cheap. Without restic here that offer would fail at
+            # the last possible moment, after the disk was already erased.
+            pkgs.restic
+            # fix_boot_order reads and rewrites NVRAM from here rather than
+            # from inside the target, so the installed system does not have
+            # to have chosen to ship it - which, on real hardware, it had
+            # not.
+            pkgs.efibootmgr
+            # The installer offers to push the host it just wrote, which
+            # means logging in to GitHub from here. Without gh on the image
+            # that offer would fail at the moment it was accepted.
+            pkgs.gh
+            # How the credentials get here without anything long being
+            # typed: one note holds the whole environment file. Unlocking a
+            # vault exposes all of it to whatever runs on the machine,
+            # which is a real objection on a daily driver and a small one
+            # on live media that is minutes from being wiped.
+            pkgs.bitwarden-cli
+          ];
+
+          systemd.services.tailscaled = {
+            description = "Tailscale, started on demand by `kiwami remote`";
+            wantedBy = lib.mkForce [ ];
+            serviceConfig.ExecStart = "${pkgs.tailscale}/bin/tailscaled";
+          };
+
+          users.users.nixos.openssh.authorizedKeys.keys =
+            lib.optionals testKey harnessKey;
+
+          # The harness drives this image by typing at the serial console,
+          # which means it needs a shell there - and the installer now
+          # takes that console for itself, which is right for a headless
+          # machine and fatal for a test that has to run `kiwami install`
+          # with flags.
+          #
+          # Pre-creating the marker the autostart already checks turns it
+          # off without a second mechanism to keep in step. Only on the
+          # -test image: the real one must start on its own, which is the
+          # whole point of it.
+          systemd.tmpfiles.rules =
+            lib.optional testKey "f /tmp/.kiwami-installer-started 0644 root root -";
+
+          # The installer shells out to `nix build` for the disko script,
+          # and the stock ISO does not enable flakes.
+          nix.settings.experimental-features = [ "nix-command" "flakes" ];
+
+          # The host's closure, and a signpost saying it is there. Two
+          # files rather than one so the installer can refuse to use a
+          # closure built for a different machine.
+          isoImage.storeContents =
+            lib.optional (prebuilt != null) prebuilt.config.system.build.toplevel;
+          isoImage.contents = lib.optionals (prebuilt != null) [
+            {
+              source = pkgs.writeText "kiwami-host" prebuilt.config.networking.hostName;
+              target = "/kiwami/host";
+            }
+            {
+              source = pkgs.writeText "kiwami-system"
+                "${prebuilt.config.system.build.toplevel}";
+              target = "/kiwami/system";
+            }
+          ];
+
+          # zstd, not the default xz: the image is recompressed in full for
+          # every change, however small, and that cost dominates the build.
+          # A throwaway image booted in QEMU does not care about its size.
+          isoImage.squashfsCompression = "zstd -Xcompression-level 3";
+
+          # Long enough to actually catch. The default hurried past too
+          # fast to pick anything from the boot menu.
+          boot.loader.timeout = 10;
+
+          # Keep the serial console so the harness can drive the image
+          # exactly as it drives the stock ISO.
+          #
+          # copytoram reads the squashfs into memory once, at boot, and
+          # runs from there. Without it the whole live system is paged off
+          # the USB stick for the length of the install, and a link that
+          # drops - a portable SSD renegotiating power, a marginal USB-C
+          # port - takes everything with it: squashfs I/O errors, then
+          # processes segfaulting because their pages cannot be read back.
+          # Seen on an XPS 13 mid-install.
+          #
+          # It costs the image's size in RAM (1.5G here) and a slower boot,
+          # which is one long sequential read instead of thousands of small
+          # random ones under load. That trade is worth taking by default;
+          # a machine too small for it is not one this installs on.
+          boot.kernelParams =
+            [ "console=tty0" "copytoram" ]
+            ++ lib.optional (system == "aarch64-linux") "console=ttyAMA0,115200"
+            ++ lib.optional (system == "x86_64-linux") "console=ttyS0,115200";
+
+          # Start the installer on login, on the first console only.
+          #
+          # An image whose purpose is installing should not require
+          # remembering three commands in the right order. But it must be
+          # escapable: the marker means quitting drops you to a shell and
+          # a second login stays a shell, so a wrong turn is not a reboot.
+          # Other TTYs are left alone entirely.
+          programs.bash.loginShellInit = ''
+            # Where the installer should appear: the serial console when
+            # the kernel has one - a headless machine, or the harness -
+            # and the screen otherwise. Exactly one console, because two
+            # installers on one disk is worse than none.
+            #
+            # Gating on tty1 alone put it where nobody was looking: a
+            # headless install ran the whole conversation on a screen that
+            # does not exist, while the serial line it was being watched
+            # on sat at a shell prompt. ssh gets /dev/pts/N and matches
+            # neither.
+            kiwami_want=/dev/tty1
+            for kiwami_t in $(cat /sys/class/tty/console/active 2>/dev/null); do
+              case "$kiwami_t" in
+                ttyS*|ttyAMA*) kiwami_want=/dev/$kiwami_t ;;
+              esac
+            done
+            if [ "$(tty)" = "$kiwami_want" ] && [ ! -e /tmp/.kiwami-installer-started ]; then
+              touch /tmp/.kiwami-installer-started
+              sudo kiwami install --guided || true
+              echo
+              echo "Installer exited. You are at a shell; run it again with:"
+              echo "  sudo kiwami install --guided"
+            fi
+          '';
+
+          services.getty.helpLine = lib.mkForce ''
+
+            Kiwami installer. It starts on its own; these are for when
+            you have left it, or are on another console.
+
+              sudo kiwami install --guided    the whole thing: network, remote, install
+              sudo kiwami net                 just get online
+              sudo kiwami remote              just be reachable over your tailnet
+
+            For a new machine, which needs somewhere to write its detected
+            hardware:
+
+              git clone https://github.com/kiwamios/kiwami ~/kiwami
+              sudo kiwami install --flake ~/kiwami --host <name> --new
+          '';
+        })
+      ];
+    };
     in
     {
       # The kiwami CLI. Built once here and consumed by the hosts below, so the
@@ -107,6 +305,40 @@
         pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux
           (import ./tests { inherit pkgs inputs home-manager; }));
 
+      # How a machine is built from Kiwami, exported so a consumer does not
+      # have to reconstruct it.
+      #
+      # Without this, somebody keeping their hosts in their own repository has
+      # to rediscover the whole recipe - nixosSystem with our module, disko,
+      # inputs passed through specialArgs, allowUnfree - and gets a subtly
+      # different machine from ours whenever they miss a piece. Our own hosts
+      # are built through this same function, so their machines and ours
+      # cannot drift.
+      #
+      #   nixosConfigurations.thinkpad = kiwami.lib.mkHost [ ./hosts/thinkpad ];
+      lib = {
+        inherit mkHost;
+
+        # An installer image for a host defined somewhere else.
+        #
+        #   installer-thinkpad = kiwami.lib.installerFor
+        #     self.nixosConfigurations.thinkpad;
+        #
+        # `kiwami image` builds installer-<host> from the machine's own flake,
+        # so a consumer keeping hosts in their own repository needs to be able
+        # to produce that attribute. Without this the command works for this
+        # repository and nowhere else - which is the same mistake the
+        # hardcoded flake URL was.
+        installerFor = target: mkInstaller {
+          system = target.config.nixpkgs.hostPlatform.system;
+          prebuilt = target;
+        };
+
+        # A plain installer for an architecture, for a machine that does not
+        # exist yet.
+        installerFallback = system: mkInstaller { inherit system; };
+      };
+
       # The distro as an importable module, so a machine can be built from
       # Kiwami without forking it. Deliberately excludes anything
       # host-specific - hardware, hostname, users - which the consumer
@@ -135,208 +367,6 @@
       };
 
       nixosConfigurations =
-        # The installer image. Deliberately not a hosts/ entry: those all get
-        # nixosModules.default, and an installer has no business carrying a
-        # Hyprland desktop it will never start.
-        let
-          # The harness key, present only in the -test images. A shipped
-          # installer must not carry a key from this repository; the test
-          # variant carries it so `vmssh` works and the whole installer matrix
-          # runs against the real image instead of being rewritten to drive a
-          # serial console.
-          # Missing is an error, not an empty list. A -test image whose entire
-          # purpose is carrying this key built happily without one, and the
-          # only symptom was ssh refusing a connection several minutes later.
-          harnessKey =
-            let f = ./vm/keys/kiwami_vm.pub;
-            in if builtins.pathExists f
-               then [ (builtins.readFile f) ]
-               else throw ''
-                 installer-*-test needs vm/keys/kiwami_vm.pub, which is not in
-                 this flake. Generate it with `just vm install`, and remember
-                 that flakes only see git-tracked files.
-               '';
-
-          # An installer image carrying a host's entire built system.
-          #
-          # `nixos-install --system <path>` installs a prebuilt closure rather
-          # than evaluating a flake, so a machine can be rebuilt with no
-          # network at all: the 5.7 GiB it would otherwise download is already
-          # on the stick. What it does not carry is any state - no keys, no
-          # tokens, no wifi - so the image is not a bundle of secrets. It is
-          # still your configuration, which names your bucket and your
-          # hostname, so it is private rather than publishable.
-          #
-          # Deliberately not fresh-by-design: the image supplies the machine,
-          # `kiwami snapshot restore` supplies what has happened since. A
-          # months-old image still boots you into a working laptop.
-          mkInstaller = { system, testKey ? false, prebuilt ? null }:
-        nixpkgs.lib.nixosSystem {
-          specialArgs = { inherit inputs; };
-          modules = [
-            ({ modulesPath, pkgs, lib, ... }: {
-              imports = [ (modulesPath + "/installer/cd-dvd/installation-cd-minimal.nix") ];
-
-              nixpkgs.hostPlatform = system;
-
-              # The whole point: `kiwami install`, not a nix run incantation.
-              # git comes too - installing a new machine needs a writable
-              # checkout to generate hardware.nix into.
-              environment.systemPackages = [
-                self.packages.${system}.kiwami
-                pkgs.git
-                # `kiwami remote` drives this. Present but not started: joining
-                # a tailnet is an explicit act, not something live media should
-                # do on its own. It is also how the backup credentials reach
-                # this machine, by taildrop or scp, without anything long being
-                # typed.
-                pkgs.tailscale
-                # The installer offers to restore a previous machine's identity
-                # before the first boot, which is the thing that makes a
-                # reinstall cheap. Without restic here that offer would fail at
-                # the last possible moment, after the disk was already erased.
-                pkgs.restic
-                # fix_boot_order reads and rewrites NVRAM from here rather than
-                # from inside the target, so the installed system does not have
-                # to have chosen to ship it - which, on real hardware, it had
-                # not.
-                pkgs.efibootmgr
-                # The installer offers to push the host it just wrote, which
-                # means logging in to GitHub from here. Without gh on the image
-                # that offer would fail at the moment it was accepted.
-                pkgs.gh
-                # How the credentials get here without anything long being
-                # typed: one note holds the whole environment file. Unlocking a
-                # vault exposes all of it to whatever runs on the machine,
-                # which is a real objection on a daily driver and a small one
-                # on live media that is minutes from being wiped.
-                pkgs.bitwarden-cli
-              ];
-
-              systemd.services.tailscaled = {
-                description = "Tailscale, started on demand by `kiwami remote`";
-                wantedBy = lib.mkForce [ ];
-                serviceConfig.ExecStart = "${pkgs.tailscale}/bin/tailscaled";
-              };
-
-              users.users.nixos.openssh.authorizedKeys.keys =
-                lib.optionals testKey harnessKey;
-
-              # The harness drives this image by typing at the serial console,
-              # which means it needs a shell there - and the installer now
-              # takes that console for itself, which is right for a headless
-              # machine and fatal for a test that has to run `kiwami install`
-              # with flags.
-              #
-              # Pre-creating the marker the autostart already checks turns it
-              # off without a second mechanism to keep in step. Only on the
-              # -test image: the real one must start on its own, which is the
-              # whole point of it.
-              systemd.tmpfiles.rules =
-                lib.optional testKey "f /tmp/.kiwami-installer-started 0644 root root -";
-
-              # The installer shells out to `nix build` for the disko script,
-              # and the stock ISO does not enable flakes.
-              nix.settings.experimental-features = [ "nix-command" "flakes" ];
-
-              # The host's closure, and a signpost saying it is there. Two
-              # files rather than one so the installer can refuse to use a
-              # closure built for a different machine.
-              isoImage.storeContents =
-                lib.optional (prebuilt != null) prebuilt.config.system.build.toplevel;
-              isoImage.contents = lib.optionals (prebuilt != null) [
-                {
-                  source = pkgs.writeText "kiwami-host" prebuilt.config.networking.hostName;
-                  target = "/kiwami/host";
-                }
-                {
-                  source = pkgs.writeText "kiwami-system"
-                    "${prebuilt.config.system.build.toplevel}";
-                  target = "/kiwami/system";
-                }
-              ];
-
-              # zstd, not the default xz: the image is recompressed in full for
-              # every change, however small, and that cost dominates the build.
-              # A throwaway image booted in QEMU does not care about its size.
-              isoImage.squashfsCompression = "zstd -Xcompression-level 3";
-
-              # Long enough to actually catch. The default hurried past too
-              # fast to pick anything from the boot menu.
-              boot.loader.timeout = 10;
-
-              # Keep the serial console so the harness can drive the image
-              # exactly as it drives the stock ISO.
-              #
-              # copytoram reads the squashfs into memory once, at boot, and
-              # runs from there. Without it the whole live system is paged off
-              # the USB stick for the length of the install, and a link that
-              # drops - a portable SSD renegotiating power, a marginal USB-C
-              # port - takes everything with it: squashfs I/O errors, then
-              # processes segfaulting because their pages cannot be read back.
-              # Seen on an XPS 13 mid-install.
-              #
-              # It costs the image's size in RAM (1.5G here) and a slower boot,
-              # which is one long sequential read instead of thousands of small
-              # random ones under load. That trade is worth taking by default;
-              # a machine too small for it is not one this installs on.
-              boot.kernelParams =
-                [ "console=tty0" "copytoram" ]
-                ++ lib.optional (system == "aarch64-linux") "console=ttyAMA0,115200"
-                ++ lib.optional (system == "x86_64-linux") "console=ttyS0,115200";
-
-              # Start the installer on login, on the first console only.
-              #
-              # An image whose purpose is installing should not require
-              # remembering three commands in the right order. But it must be
-              # escapable: the marker means quitting drops you to a shell and
-              # a second login stays a shell, so a wrong turn is not a reboot.
-              # Other TTYs are left alone entirely.
-              programs.bash.loginShellInit = ''
-                # Where the installer should appear: the serial console when
-                # the kernel has one - a headless machine, or the harness -
-                # and the screen otherwise. Exactly one console, because two
-                # installers on one disk is worse than none.
-                #
-                # Gating on tty1 alone put it where nobody was looking: a
-                # headless install ran the whole conversation on a screen that
-                # does not exist, while the serial line it was being watched
-                # on sat at a shell prompt. ssh gets /dev/pts/N and matches
-                # neither.
-                kiwami_want=/dev/tty1
-                for kiwami_t in $(cat /sys/class/tty/console/active 2>/dev/null); do
-                  case "$kiwami_t" in
-                    ttyS*|ttyAMA*) kiwami_want=/dev/$kiwami_t ;;
-                  esac
-                done
-                if [ "$(tty)" = "$kiwami_want" ] && [ ! -e /tmp/.kiwami-installer-started ]; then
-                  touch /tmp/.kiwami-installer-started
-                  sudo kiwami install --guided || true
-                  echo
-                  echo "Installer exited. You are at a shell; run it again with:"
-                  echo "  sudo kiwami install --guided"
-                fi
-              '';
-
-              services.getty.helpLine = lib.mkForce ''
-
-                Kiwami installer. It starts on its own; these are for when
-                you have left it, or are on another console.
-
-                  sudo kiwami install --guided    the whole thing: network, remote, install
-                  sudo kiwami net                 just get online
-                  sudo kiwami remote              just be reachable over your tailnet
-
-                For a new machine, which needs somewhere to write its detected
-                hardware:
-
-                  git clone https://github.com/kiwamios/kiwami ~/kiwami
-                  sudo kiwami install --flake ~/kiwami --host <name> --new
-              '';
-            })
-          ];
-        };
-        in
         nixpkgs.lib.genAttrs hostNames (name: mkHost [ (./hosts + "/${name}") ])
         # An installer image per host, carrying that host's whole built
         # system. Derived rather than listed: a machine added to hosts/ gets
@@ -348,10 +378,7 @@
             host = nixpkgs.lib.removePrefix "installer-" imageName;
             target = self.nixosConfigurations.${host};
           in
-          mkInstaller {
-            system = target.config.nixpkgs.hostPlatform.system;
-            prebuilt = target;
-          })
+          self.lib.installerFor target)
         // {
           installer-x86_64 = mkInstaller { system = "x86_64-linux"; };
           installer-aarch64 = mkInstaller { system = "aarch64-linux"; };
