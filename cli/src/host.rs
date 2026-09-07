@@ -323,17 +323,17 @@ mod tests {
 
     #[test]
     fn slug_from_both_remote_forms() {
-        let want = Some("jimzer/kiwami".to_string());
-        assert_eq!(github_slug("git@github.com:jimzer/kiwami.git"), want);
-        assert_eq!(github_slug("https://github.com/jimzer/kiwami.git"), want);
-        assert_eq!(github_slug("https://github.com/jimzer/kiwami"), want);
-        assert_eq!(github_slug("ssh://git@github.com/jimzer/kiwami.git"), want);
+        let want = Some("kiwamios/kiwami".to_string());
+        assert_eq!(github_slug("git@github.com:kiwamios/kiwami.git"), want);
+        assert_eq!(github_slug("https://github.com/kiwamios/kiwami.git"), want);
+        assert_eq!(github_slug("https://github.com/kiwamios/kiwami"), want);
+        assert_eq!(github_slug("ssh://git@github.com/kiwamios/kiwami.git"), want);
     }
 
     #[test]
     fn slug_declines_what_it_cannot_parse() {
         // A self-hosted remote gets no GitHub URL rather than a wrong one.
-        assert_eq!(github_slug("git@gitlab.com:jimzer/kiwami.git"), None);
+        assert_eq!(github_slug("git@gitlab.com:kiwamios/kiwami.git"), None);
         assert_eq!(github_slug("/srv/git/kiwami.git"), None);
         assert_eq!(github_slug("https://github.com/jimzer"), None);
     }

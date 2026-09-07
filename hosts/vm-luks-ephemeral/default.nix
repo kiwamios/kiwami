@@ -46,7 +46,7 @@
   # catch.
   kiwami.rootDevice = "/dev/mapper/cryptroot";
 
-  kiwami.flake = "github:jimzer/kiwami";
+  kiwami.flake = "github:kiwamios/kiwami";
   networking.hostName = "kiwami-luks-ephemeral";
 
   boot.loader.systemd-boot.enable = true;

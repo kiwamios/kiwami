@@ -24,7 +24,7 @@ ON_ISO="${ON_ISO:-0}"
 FLAKE="/home/nixos/kiwami"
 if [[ "$ON_ISO" == "1" ]]; then
   echo "cloning the flake into the live image"
-  "$SSH" "test -d $FLAKE || git clone -q https://github.com/jimzer/kiwami $FLAKE" || {
+  "$SSH" "test -d $FLAKE || git clone -q https://github.com/kiwamios/kiwami $FLAKE" || {
     echo "clone failed"; exit 1; }
 fi
 K="sudo kiwami install --force --flake $FLAKE --host vm-aarch64"
@@ -100,7 +100,7 @@ check "will not invent a host silently" "Pass --new to scaffold" \
 check "rejects a bad host name"        "bad host name" \
   "sudo kiwami install --force --flake $FLAKE --host 'a/b' --new --disk /dev/vdc --yes"
 check "cannot add a host to a fetched flake" "fetched read-only" \
-  "sudo kiwami install --force --flake github:jimzer/kiwami --host laptop --new --disk /dev/vdc --yes"
+  "sudo kiwami install --force --flake github:kiwamios/kiwami --host laptop --new --disk /dev/vdc --yes"
 
 # --- prompts -------------------------------------------------------------
 # Its own host name: this is the one check that accepts the layout, which

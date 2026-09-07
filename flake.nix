@@ -330,7 +330,7 @@
                 For a new machine, which needs somewhere to write its detected
                 hardware:
 
-                  git clone https://github.com/jimzer/kiwami ~/kiwami
+                  git clone https://github.com/kiwamios/kiwami ~/kiwami
                   sudo kiwami install --flake ~/kiwami --host <name> --new
               '';
             })

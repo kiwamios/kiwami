@@ -37,7 +37,7 @@ enum Cmd {
         #[arg(long)]
         host: Option<String>,
         /// Flake to install from
-        #[arg(long, default_value = "github:jimzer/kiwami")]
+        #[arg(long, default_value = "github:kiwamios/kiwami")]
         flake: String,
         /// Skip the confirmation prompt
         #[arg(long)]

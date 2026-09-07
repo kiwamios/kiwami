@@ -324,7 +324,7 @@ fn commit_drift() -> Finding {
             "nix-command flakes",
             "flake",
             "metadata",
-            "github:jimzer/kiwami",
+            "github:kiwamios/kiwami",
             "--refresh",
             "--json",
         ])

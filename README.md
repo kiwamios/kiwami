@@ -28,7 +28,7 @@ them:
 Install NixOS, then:
 
 ```bash
-nixos-install --flake github:jimzer/kiwami#desktop
+nixos-install --flake github:kiwamios/kiwami#desktop
 ```
 
 ## Building on it
@@ -37,7 +37,7 @@ A machine is a small flake of its own — no fork:
 
 ```nix
 {
-  inputs.kiwami.url = "github:jimzer/kiwami";
+  inputs.kiwami.url = "github:kiwamios/kiwami";
 
   outputs = { nixpkgs, kiwami, ... }: {
     nixosConfigurations.my-laptop = nixpkgs.lib.nixosSystem {
