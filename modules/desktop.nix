@@ -42,6 +42,31 @@ in
     binPath = "/run/current-system/sw/bin/Hyprland";
   };
 
+  # One session, so the greeter has nothing to ask.
+  #
+  # Hyprland registers its own entry and UWSM registers another, which left a
+  # greeter offering "Hyprland" and "Hyprland (UWSM)" - two names for what is,
+  # here, one supported way to start a desktop. Picking the wrong one gets you
+  # a session with no systemd targets, which fails quietly and later.
+  #
+  # A machine that supports one thing should not open with a question about
+  # it. The Exec line is the same `session` used by the autologin path, so
+  # there is still exactly one definition of how this desktop starts.
+  services.displayManager.sessionPackages = lib.mkForce [
+    (pkgs.runCommand "kiwami-session"
+      { passthru.providedSessions = [ "hyprland" ]; }
+      ''
+        mkdir -p $out/share/wayland-sessions
+        cat > $out/share/wayland-sessions/hyprland.desktop <<EOF
+        [Desktop Entry]
+        Name=Hyprland
+        Comment=Hyprland, managed by UWSM
+        Exec=${session}
+        Type=Application
+        EOF
+      '')
+  ];
+
   # Autologin straight into Hyprland: the VM must reach a desktop with no
   # interaction so the agent harness can screenshot it.
   #
@@ -65,6 +90,31 @@ in
   # else's tested code doing the part where being wrong locks you out.
   programs.regreet = lib.mkIf (config.kiwami.greeter == "graphical") {
     enable = true;
+
+    # Pointed at the curated session list, not at everything installed.
+    #
+    # ReGreet finds sessions by walking XDG_DATA_DIRS, which includes the
+    # whole system path - so it saw Hyprland's own desktop entry alongside the
+    # UWSM one and offered both. Two names for the one supported way to start
+    # a desktop, where picking the wrong one gets you a session with no
+    # systemd targets: a question with a wrong answer in it.
+    #
+    # sessionData.desktops is the list the display manager already curates
+    # from services.displayManager.sessionPackages, which is forced to one
+    # entry above. Set on the binary because greetd starts the greeter through
+    # PAM, which builds a fresh environment - a variable on the systemd unit
+    # reaches the unit and not the process.
+    package = pkgs.symlinkJoin {
+      name = "regreet-kiwami";
+      inherit (pkgs.greetd.regreet) version;
+      meta = pkgs.greetd.regreet.meta // { mainProgram = "regreet"; };
+      paths = [ pkgs.greetd.regreet ];
+      nativeBuildInputs = [ pkgs.makeWrapper ];
+      postBuild = ''
+        wrapProgram $out/bin/regreet \
+          --set XDG_DATA_DIRS ${config.services.displayManager.sessionData.desktops}/share
+      '';
+    };
 
     settings = {
       background = {
@@ -108,6 +158,29 @@ in
       label.title-1, label.title-2 { color: ${palette.lightForeground}; }
     '';
   };
+
+  # A first login that does not ask which session.
+  #
+  # ReGreet leaves the session box blank until it has remembered a successful
+  # login - "Last session for user X missing" in its log - so a machine nobody
+  # has logged into yet opens with an empty required field. With one session
+  # registered there is nothing to choose, which makes the question pure
+  # friction.
+  #
+  # Seeded rather than forced: C in tmpfiles copies only when the file is
+  # absent, so this is the state of a machine that has never been logged into
+  # and ReGreet owns it from the first login onward.
+  systemd.tmpfiles.rules = lib.mkIf (config.kiwami.greeter == "graphical") [
+    "d /var/lib/regreet 0755 greeter greeter - -"
+    "C /var/lib/regreet/state.toml 0644 greeter greeter - ${
+      pkgs.writeText "regreet-state.toml" ''
+        last_user = "${config.kiwami.user}"
+
+        [user_to_last_sess]
+        ${config.kiwami.user} = "Hyprland"
+      ''
+    }"
+  ];
 
   services.greetd = {
     enable = true;
