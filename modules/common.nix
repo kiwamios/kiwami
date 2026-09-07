@@ -44,16 +44,24 @@ in
   # seeds it, but a machine built any other way (the CI boot test, or an
   # install where seeding failed) would come up with a user nobody can be.
   #
-  # The default is a fixed hash of "kiwami"; `kiwami doctor` reports it as the
-  # install default until `kiwami passwd` replaces it.
+  # If there is no hash the account is locked rather than given a default:
+  # `kiwami install` asks for a password, and anything that reaches this
+  # without one should refuse logins rather than accept a known string.
   system.activationScripts.kiwamiPassword = {
     deps = [ "specialfs" ];
     text = ''
       mkdir -p ${passwordDir}
       chmod 700 ${passwordDir}
       if [ ! -s ${passwordDir}/${config.kiwami.user} ]; then
-        echo '$6$kiwamidefault$RHqPdZfAbfcBgynCC4GyrLHRK4DT0IXCI6QwVxObCgTY9Ky6dUSfFpyhBLvBuTozVnGeXnNSczef4HvLQPy1U1' \
-          > ${passwordDir}/${config.kiwami.user}
+        # Locked, not a default.
+        #
+        # This used to write a fixed hash of "kiwami", which is a password
+        # everybody knows the moment this repository is public - and every
+        # machine had it until its owner remembered to change it. A locked
+        # account fails closed: it is discovered by the person the machine
+        # belongs to, at the greeter, rather than by whoever else reaches it
+        # first.
+        echo '!' > ${passwordDir}/${config.kiwami.user}
         chmod 600 ${passwordDir}/${config.kiwami.user}
       fi
     '';

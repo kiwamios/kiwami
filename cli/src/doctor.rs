@@ -619,6 +619,16 @@ fn password_is_declarative() -> Finding {
         // Still the one the installer wrote? The hash is salted, so the check
         // is to re-hash the default with the stored salt and compare - which
         // is the only way to tell without keeping a copy of the plaintext.
+        // "!" is not a password, it is the absence of one written down. The
+        // installer leaves it when nobody was there to be asked, and it is
+        // the correct state for a machine mid-setup - but reporting it as a
+        // password of one's own would be a lie of exactly the kind this
+        // command exists to catch.
+        if fs::read_to_string(&file).map(|s| s.trim() == "!").unwrap_or(false) {
+            return Finding::new(Level::Warn, format!("{user}'s account is locked"))
+                .detail("no password was set, so nobody can log in at the greeter")
+                .remedy("sudo kiwami passwd");
+        }
         if is_default_password(&file) {
             return Finding::new(Level::Warn, format!("{user} still has the install default"))
                 .detail("anyone who has read the docs knows it")

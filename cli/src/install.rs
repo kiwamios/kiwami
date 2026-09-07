@@ -563,7 +563,7 @@ pub fn run_install(opts: Options) -> Result<(), String> {
     }
 
     println!("==> seeding the password");
-    seed_password(&flake, &host.name)?;
+    seed_password(&flake, &host.name, opts.guided && !opts.assume_yes)?;
 
     println!("==> setting the boot order");
     fix_boot_order()?;
@@ -2101,9 +2101,68 @@ fn target_users(flake: &str, host: &str) -> Vec<String> {
 /// works. `kiwami doctor` reports it as a default until it is changed, which
 /// is the honest trade - a machine you can log into and a visible nag, rather
 /// than one you cannot.
-const DEFAULT_PASSWORD: &str = "kiwami";
+/// A locked account: the field exists, and no password can satisfy it.
+///
+/// This replaces a hardcoded default of "kiwami". A default password shipped
+/// in a public repository is a password everybody knows, and every machine
+/// installed from it had that password until its owner remembered to change
+/// it. Failing closed is the right direction for a credential: a machine
+/// nobody can log into is a bad afternoon, a machine anybody can log into is
+/// worse, and only one of the two is discovered by the person it belongs to.
+const LOCKED: &str = "!";
 
-fn seed_password(flake: &str, host: &str) -> Result<(), String> {
+/// Ask for a password, twice, without it appearing on screen.
+///
+/// mkpasswd does the reading, because it already prompts with the echo off
+/// and this is not the place to be reimplementing terminal handling. The
+/// confirmation is the interesting part: two hashes of the same password have
+/// different salts and cannot be compared, so the second entry is hashed with
+/// the salt of the first. Same password, same salt, same hash.
+fn ask_password(user: &str) -> Result<String, String> {
+    for attempt in 0..3 {
+        println!("\n==> a password for {user}");
+        let first = mkpasswd(None)?;
+        let Some(salt) = first.split('$').nth(2) else {
+            return Err("mkpasswd produced a hash in an unfamiliar format".into());
+        };
+        let again = mkpasswd(Some(salt))?;
+        if first == again {
+            return Ok(first);
+        }
+        if attempt < 2 {
+            println!("    they do not match - try again");
+        }
+    }
+    Err("the passwords did not match. Set one after boot with `kiwami passwd`".into())
+}
+
+/// One hidden prompt, hashed. With a salt, the same password hashes the same
+/// way - which is what makes confirming possible.
+fn mkpasswd(salt: Option<&str>) -> Result<String, String> {
+    let mut cmd = Command::new("mkpasswd");
+    cmd.args(["-m", "sha-512"]);
+    if let Some(s) = salt {
+        cmd.args(["-S", s]);
+    }
+    // stdin and stderr inherited: mkpasswd reads the terminal directly and
+    // writes its prompt there. Capturing either means typing into silence.
+    let out = cmd
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .output()
+        .map_err(|e| format!("mkpasswd: {e}"))?;
+    if !out.status.success() {
+        return Err("mkpasswd failed".into());
+    }
+    let hash = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if hash.is_empty() {
+        return Err("no password was given".into());
+    }
+    Ok(format!("{hash}\n"))
+}
+
+fn seed_password(flake: &str, host: &str, interactive: bool) -> Result<(), String> {
     let dir = Command::new("nix")
         .args([
             "--extra-experimental-features",
@@ -2127,25 +2186,23 @@ fn seed_password(flake: &str, host: &str) -> Result<(), String> {
         let parent = target.parent().ok_or("bad password path")?;
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
 
-        let out = Command::new("mkpasswd")
-            .args(["-m", "sha-512", "-s"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .and_then(|mut c| {
-                use std::io::Write;
-                c.stdin.as_mut().unwrap().write_all(DEFAULT_PASSWORD.as_bytes())?;
-                c.wait_with_output()
-            })
-            .map_err(|e| format!("mkpasswd: {e}"))?;
-        if !out.status.success() {
-            return Err("mkpasswd failed".into());
-        }
-        fs::write(&target, &out.stdout).map_err(|e| e.to_string())?;
+        let hash = if interactive {
+            ask_password(user)?
+        } else {
+            format!("{LOCKED}\n")
+        };
+
+        fs::write(&target, hash.as_bytes()).map_err(|e| e.to_string())?;
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&target, fs::Permissions::from_mode(0o600))
             .map_err(|e| e.to_string())?;
-        println!("    {user}: default password, change it with `kiwami passwd`");
+
+        if interactive {
+            println!("    {user}: password set");
+        } else {
+            println!("    {user}: locked - no password was asked for.");
+            println!("      Set one before rebooting:  sudo kiwami passwd");
+        }
     }
     Ok(())
 }
