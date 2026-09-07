@@ -915,6 +915,34 @@ fn unpersisted_state() -> Finding {
     .remedy("decide which matter and add them to kiwami.persist.directories")
 }
 
+/// Files, not entries.
+///
+/// Counting directory entries called /var/lib/kiwami hidden because it holds
+/// an empty `backup/` - which exists only as somewhere for a nested bind
+/// mount to attach. Nothing was hidden; the directory is structural. A
+/// warning that fires on the normal arrangement of the machine is a warning
+/// people learn to ignore, which is worse than not having it.
+fn files_under(dir: &std::path::Path, depth: usize) -> usize {
+    if depth > 6 {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut n = 0;
+    for e in entries.flatten() {
+        match e.file_type() {
+            Ok(t) if t.is_dir() => n += files_under(&e.path(), depth + 1),
+            Ok(_) => n += 1,
+            Err(_) => {}
+        }
+        if n > 500 {
+            break; // enough to report; no need to walk a whole home directory
+        }
+    }
+    n
+}
+
 /// Files that a bind mount has hidden.
 ///
 /// Persistence is a bind mount: /persist/home/you/.ssh is mounted onto
@@ -990,9 +1018,12 @@ fn shadowed_by_persistence() -> Finding {
     let mut hidden: Vec<String> = Vec::new();
     for p in &paths {
         let under = peek.join(p.trim_start_matches('/'));
-        let n = fs::read_dir(&under).map(|d| d.count()).unwrap_or(0);
+        let n = files_under(&under, 0);
         if n > 0 {
-            hidden.push(format!("{p}  ({n} entries underneath)"));
+            hidden.push(format!(
+                "{p}  ({n} file{} underneath)",
+                if n == 1 { "" } else { "s" }
+            ));
         }
     }
 
