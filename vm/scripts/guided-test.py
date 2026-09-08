@@ -191,6 +191,13 @@ def conversation():
     #
     # Answered with the org's worked example rather than anybody's personal
     # machines, so the test clones something it is allowed to depend on.
+    # 1) a repository you already have. The other branch makes one with gh,
+    # which would mean this test creating repositories on every run.
+    if not reply(c, "1", "Your repository", 60):
+        no("it offers to use a repository you already have", c.buf)
+        return before
+    ok("it offers to use a repository you already have")
+
     if not reply(c, "github:kiwamios/example-machines",
                  "Machines this flake already describes", 300):
         no("it asks for a repository of your own before offering a new machine", c.buf)

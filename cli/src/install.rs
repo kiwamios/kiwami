@@ -1043,11 +1043,19 @@ fn ask_for_machines_repo(assume_yes: bool) -> Result<String, String> {
     println!("    {DISTRO} is the distro itself. Your machines live in a");
     println!("    repository you control, with Kiwami as an input - so that");
     println!("    updating one never touches the other.");
-    println!("\n    If you do not have one yet, on any machine with nix:");
-    println!("      nix flake init -t {DISTRO}");
-    println!("      # then push it to github, and come back");
+    println!("\n    1) a repository you already have");
+    println!("    2) make one for me");
 
     for _ in 0..3 {
+        let answer = prompt("\nWhich? [1/2] ").map_err(|e| e.to_string())?;
+        match answer.trim() {
+            "2" => return create_machines_repo(),
+            "1" | "" => {}
+            _ => {
+                println!("    1 or 2.");
+                continue;
+            }
+        }
         let answer = prompt("\nYour repository (github:you/your-repo): ")
             .map_err(|e| e.to_string())?;
         let answer = answer.trim().to_string();
@@ -1063,6 +1071,122 @@ fn ask_for_machines_repo(assume_yes: bool) -> Result<String, String> {
     }
     Err("no repository given. Nothing has been written to the disk.".into())
 }
+
+/// Make the repository, rather than explaining how to.
+///
+/// Every piece of this already existed - the installer authenticates gh,
+/// clones, scaffolds a host, commits and pushes - except the one step that
+/// comes first, which was left as homework in a help message. That is exactly
+/// the seam somebody installing this for the first time falls into: they have
+/// no repository, so the tool that is meant to set up their machine tells them
+/// to go and read about flake templates.
+fn create_machines_repo() -> Result<String, String> {
+    if !gh_authenticated() {
+        println!("\n==> github login (the repository has to go somewhere)");
+        let status = Command::new("gh").args(["auth", "login"]).status();
+        if !matches!(status, Ok(s) if s.success()) && !gh_authenticated() {
+            return Err("not logged in to github, so there is nowhere to make it".into());
+        }
+    }
+
+    let owner = Command::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or("cannot tell who you are on github")?;
+
+    let name = prompt("\nName for it [my-machines]: ").map_err(|e| e.to_string())?;
+    let name = match name.trim() {
+        "" => "my-machines".to_string(),
+        n => n.to_string(),
+    };
+    let slug = format!("{owner}/{name}");
+
+    let private = ask_visibility()?;
+
+    // The template, instantiated. Not a copy of it kept in the CLI: the same
+    // `nix flake init -t` anybody else would run, so there is one definition
+    // of what a machines repository looks like.
+    let dir = std::env::temp_dir().join(format!("kiwami-machines-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let d = dir.to_string_lossy().to_string();
+
+    println!("\n==> writing the template");
+    run_in(&d, "nix", &[
+        "--extra-experimental-features", "nix-command flakes",
+        "flake", "init", "-t", DISTRO,
+    ])?;
+
+    run_in(&d, "git", &["init", "-q", "-b", "main"])?;
+    run_in(&d, "git", &["add", "-A"])?;
+    run_in(&d, "git", &["commit", "-q", "-m", "my machines, built from kiwami"])?;
+
+    println!("==> creating {slug}");
+    run_in(&d, "gh", &[
+        "repo", "create", &slug,
+        if private { "--private" } else { "--public" },
+        "--source", ".", "--push",
+        "--description", "My machines, built from Kiwami.",
+    ])?;
+
+    let flake = format!("github:{slug}");
+    println!("    {flake}");
+    Ok(flake)
+}
+
+/// Public or private, and what private actually costs.
+///
+/// Said here rather than discovered at the first `kiwami update` after a
+/// reboot. A private flake cannot be fetched by nix without a credential of
+/// its own - nix does not read gh's token, they are separate stores - so a
+/// machine installed from one boots fine and then cannot rebuild itself.
+fn ask_visibility() -> Result<bool, String> {
+    println!("\n    Public or private?");
+    println!("    A host holds a hostname, a user, a disk layout and where");
+    println!("    backups go. No keys - those live in your password manager");
+    println!("    and in /persist - so public is the usual answer.");
+
+    let answer = prompt("\nVisibility [public/private]: ").map_err(|e| e.to_string())?;
+    if !answer.trim().eq_ignore_ascii_case("private") {
+        return Ok(false);
+    }
+
+    println!("\n    Private means this machine cannot fetch its own");
+    println!("    configuration without a credential: nix does not read gh's");
+    println!("    token. So `kiwami update` will fail after the first reboot");
+    println!("    until you give it one, by either");
+    println!("      - a read-only token in /etc/nix/access-tokens, included");
+    println!("        from nix.conf and added to kiwami.persist.files, or");
+    println!("      - pointing kiwami.flake at git+ssh:// and giving this");
+    println!("        machine's root key access to the repository.");
+    println!("\n    Neither is automated yet.");
+
+    if insist("\nStill private? [y/n] ")? {
+        Ok(true)
+    } else {
+        println!("    public, then.");
+        Ok(false)
+    }
+}
+
+/// Run a command in a directory, failing loudly.
+fn run_in(dir: &str, cmd: &str, args: &[&str]) -> Result<(), String> {
+    let status = Command::new(cmd)
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .map_err(|e| format!("{cmd}: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{cmd} {} failed", args.join(" ")))
+    }
+}
+
 
 fn local_checkout(flake: &str) -> Option<PathBuf> {
     let path = flake.strip_prefix("path:").unwrap_or(flake);
