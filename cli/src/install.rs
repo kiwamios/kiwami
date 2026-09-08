@@ -721,6 +721,15 @@ fn flake_hosts(flake: &str) -> Result<Vec<String>, String> {
             "--extra-experimental-features",
             "nix-command flakes",
             "eval",
+            // Reading a repository is not editing it.
+            //
+            // A flake whose inputs are not locked makes nix want to write a
+            // lock file, and it cannot write into somebody's repository over
+            // the network - so listing the machines in a freshly created
+            // config repo failed with "cannot write modified lock file",
+            // which reads like the repository is broken rather than merely
+            // unlocked.
+            "--no-write-lock-file",
             "--json",
             &format!("{flake}#nixosConfigurations"),
             // Only what can actually be installed. The installer images are

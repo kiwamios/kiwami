@@ -40,7 +40,11 @@ os.environ["QMP_SOCK"] = "/tmp/kiwami-guided-qmp.sock"
 
 from console import Console, clean  # noqa: E402
 
-ISO = VM_DIR / "iso/kiwami-installer-aarch64.iso"
+# The shipped image, not the -test one. The -test image pre-creates the marker
+# the autostart checks so that `install-test` can type commands at a shell;
+# this suite's whole first claim is that nobody had to type anything, so it
+# needs the image that behaves like the one people boot.
+ISO = VM_DIR / "iso/kiwami-installer-guided-aarch64.iso"
 DISK = VM_DIR / "disks/guided.qcow2"
 VARS = VM_DIR / "disks/guided-vars.fd"
 
@@ -108,7 +112,7 @@ def newer_than_iso():
 def boot():
     """A blank disk and a cold boot from the built image."""
     if not ISO.exists():
-        print(f"no image at {ISO}\nrun: just vm build-iso")
+        print(f"no image at {ISO}\nrun: just vm build-iso-guided")
         sys.exit(1)
 
     # Which image this is testing, said out loud.
@@ -233,12 +237,14 @@ def conversation():
         return before
     ok("it reaches the disk question")
 
-    if not reply(c, "1", "separate disk", 120):
-        no("it asks about /home", c.buf)
-        return before
-    ok("it asks about /home")
-
-    if not reply(c, "", "Encrypt the disk", 120):
+    # Straight to encryption, because /home on a second disk is only offered
+    # when there is a second disk and this VM has one. That question belongs
+    # to `just vm install-test`, which attaches scratch disks for it.
+    #
+    # This expected it anyway and had been failing on it - invisibly, because
+    # the suite was booting an image whose installer never started, so it
+    # never got this far to disagree.
+    if not reply(c, "1", "Encrypt the disk", 120):
         no("it asks about encryption", c.buf)
         return before
     ok("it asks about encryption")

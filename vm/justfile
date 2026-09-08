@@ -32,6 +32,24 @@ build-iso: push
     @./scripts/vmssh 'cat ~/result/iso/*.iso' > iso/kiwami-installer-aarch64.iso
     @ls -lh iso/kiwami-installer-aarch64.iso
 
+# The shipped installer image, which starts the wizard by itself.
+#
+# Not the -test one: that pre-creates the marker the autostart checks, so it
+# lands at a shell - which is right for `just vm install-test`, which types
+# `kiwami install` with flags, and fatal for `just vm guided-test`, whose
+# first assertion is that nobody had to type anything. The guided test was
+# booting the image built never to start on its own, and had been failing on
+# that for as long as both existed.
+#
+# No harness key here, and none needed: the guided test drives the serial
+# console rather than ssh.
+build-iso-guided: push
+    @./scripts/vmssh 'nix build ~/kiwami#nixosConfigurations.installer-aarch64.config.system.build.isoImage --print-build-logs 2>&1 | tail -3'
+    @mkdir -p iso
+    @echo "copying image out (~1.5G)..."
+    @./scripts/vmssh 'cat ~/result/iso/*.iso' > iso/kiwami-installer-guided-aarch64.iso
+    @ls -lh iso/kiwami-installer-guided-aarch64.iso
+
 # Boot with the installer's scratch disks attached (empty NVMe, a partitioned
 # disk, and one too small) so `just vm install-test` has something to enumerate
 start-test-disks:
