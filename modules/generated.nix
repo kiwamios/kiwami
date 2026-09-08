@@ -64,6 +64,10 @@ in
       # ~/.local undeclared while ~/.local/state is being persisted.
       user = cfg.user;
       userDirectories = cfg.persist.userDirectories;
+      # And the individual files, which were missing: ~/.config/gh/hosts.yml is
+      # persisted and was absent from the manifest, so anything reading this to
+      # decide what has been declared was working from a partial answer.
+      userFiles = cfg.persist.userFiles;
     };
     # Where this machine came from, for `kiwami update`. Written by Nix
     # because it is a fact about how the system was built, and the only place
