@@ -49,6 +49,7 @@ in
       "vt.global_cursor_default=0"
     ];
     boot.consoleLogLevel = lib.mkDefault 3;
+
     boot.initrd.verbose = lib.mkDefault false;
 
     # The generation menu, hidden but not gone.

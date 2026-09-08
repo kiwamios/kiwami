@@ -100,7 +100,13 @@
       specialArgs = { inherit inputs; };
       modules = [
         ({ modulesPath, pkgs, lib, ... }: {
-          imports = [ (modulesPath + "/installer/cd-dvd/installation-cd-minimal.nix") ];
+          imports = [
+            (modulesPath + "/installer/cd-dvd/installation-cd-minimal.nix")
+            # The console, and only the console. The installer carries none of
+            # the rest of Kiwami - no desktop, no impermanence - but the screen
+            # you install from should look like the system you are installing.
+            ./modules/console.nix
+          ];
 
           nixpkgs.hostPlatform = system;
 
@@ -252,11 +258,14 @@
               sudo kiwami net                 just get online
               sudo kiwami remote              just be reachable over your tailnet
 
-            For a new machine, which needs somewhere to write its detected
-            hardware:
+            Machines live in a repository you control, with Kiwami as an
+            input. If you do not have one yet, on any machine with nix:
 
-              git clone https://github.com/kiwamios/kiwami ~/kiwami
-              sudo kiwami install --flake ~/kiwami --host <name> --new
+              nix flake init -t github:kiwamios/kiwami
+
+            Then, here:
+
+              sudo kiwami install --flake github:you/your-repo --host <name> --new
           '';
         })
       ];
@@ -360,6 +369,7 @@
           home-manager.nixosModules.home-manager
           ./modules/boot.nix
           ./modules/common.nix
+          ./modules/console.nix
           ./modules/desktop.nix
           ./modules/options.nix
           ./modules/themes.nix
