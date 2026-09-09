@@ -18,6 +18,27 @@
 use std::fs;
 use std::process::Command;
 
+/// What went wrong running a command, said in a way that names the cause.
+///
+/// `Command::status()` failing with ENOENT means the binary is not on PATH,
+/// but the error renders as "No such file or directory (os error 2)" - which
+/// reads like a missing *file* and sends you looking at the flake. It cost a
+/// round-trip here: `kiwami update` under a systemd unit, whose PATH does not
+/// include the system profile, reported "nix flake metadata: No such file or
+/// directory" and said nothing about nix being absent.
+fn ran(what: &str, e: std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        format!(
+            "{what} is not on PATH.\n\n\
+             Kiwami rebuilds by shelling out to it, so it has to be findable. \
+             Running under a systemd unit or a cron job is the usual reason - \
+             those get a minimal PATH that omits /run/current-system/sw/bin."
+        )
+    } else {
+        format!("{what}: {e}")
+    }
+}
+
 /// Where this machine's configuration lives, and what it is called there -
 /// written by Nix at build time from `kiwami.flake` and `kiwami.host`.
 ///
@@ -94,7 +115,7 @@ pub fn run(commit: Option<String>, dry: bool) -> Result<(), String> {
     let status = Command::new("nixos-rebuild")
         .args([action, "--flake", &format!("{flake}#{host}")])
         .status()
-        .map_err(|e| format!("nixos-rebuild: {e}"))?;
+        .map_err(|e| ran("nixos-rebuild", e))?;
     if !status.success() {
         return Err("nixos-rebuild failed".into());
     }
@@ -133,7 +154,7 @@ fn resolve_head(base: &str) -> Result<String, String> {
             "--json",
         ])
         .output()
-        .map_err(|e| format!("nix flake metadata: {e}"))?;
+        .map_err(|e| ran("nix", e))?;
     if !out.status.success() {
         return Err(format!(
             "cannot reach {base}: {}",
@@ -160,7 +181,7 @@ fn host_exists(flake: &str, host: &str) -> Result<bool, String> {
             "builtins.attrNames",
         ])
         .output()
-        .map_err(|e| format!("nix eval: {e}"))?;
+        .map_err(|e| ran("nix", e))?;
     if !out.status.success() {
         return Err(format!(
             "cannot evaluate {flake}: {}",
@@ -203,7 +224,7 @@ pub fn image(host: Option<String>, out: String) -> Result<(), String> {
             &out,
         ])
         .status()
-        .map_err(|e| format!("nix build: {e}"))?;
+        .map_err(|e| ran("nix", e))?;
     if !status.success() {
         return Err(format!(
             "could not build an image for {host}.\n\
