@@ -26,6 +26,18 @@
     # The desktop shell. Pinned deliberately: Quickshell is alpha and ships
     # breaking QML API changes, so it must move when we say so, not when a
     # distro packager pushes.
+    # A terminal workspace manager, not in nixpkgs - it ships its own flake.
+    #
+    # Pinned to a release tag rather than master: the docs recommend it, and a
+    # terminal multiplexer moving under you is not the kind of surprise
+    # anybody wants mid-session. It builds from source in about four minutes
+    # and is not in the public cache, so a version bump costs that on each
+    # machine.
+    herdr = {
+      url = "github:herdrdev/herdr/v0.9.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     quickshell = {
       url = "github:quickshell-mirror/quickshell";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -367,6 +379,7 @@
       nixosModules.default = { config, lib, ... }: {
         imports = [
           home-manager.nixosModules.home-manager
+          ./modules/apps.nix
           ./modules/boot.nix
           ./modules/common.nix
           ./modules/console.nix
