@@ -111,7 +111,6 @@ enum Cmd {
         #[arg(long, default_value = "./kiwami-image")]
         out: String,
     },
-    /// Back /persist up, and put it back
     /// What survives a reboot, and what does not
     Persist {
         #[command(subcommand)]
