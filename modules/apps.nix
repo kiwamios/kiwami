@@ -33,9 +33,48 @@ in
         pkgs.neovim
         pkgs.zellij
         inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default
+
+        # What the editor's config assumes exists.
+        #
+        # kickstart documents these and a machine without them starts by
+        # printing "No C compiler found!" eleven times: nvim-treesitter builds
+        # its parsers at runtime, so it wants a compiler, make and tree-sitter
+        # itself. Telescope shells out to ripgrep and fd, and mason unpacks
+        # what it downloads with unzip.
+        #
+        # This is the price of taking the config verbatim. Moving plugins into
+        # nixpkgs would remove most of it - grammars would arrive pre-built
+        # from the store, and nothing would compile on the machine at all.
+        pkgs.gcc
+        pkgs.gnumake
+        pkgs.tree-sitter
+        pkgs.ripgrep
+        pkgs.fd
+        pkgs.unzip
       ];
 
-      # Nothing to persist for any of these.
+      # The editor's configuration, from the flake rather than the machine.
+      #
+      # mkDefault so a host can replace it outright: this is my config, and
+      # somebody else's machine has no business being made to use it.
+      #
+      # Read-only, like every other config Kiwami places - which means
+      # :Lazy update cannot write lazy-lock.json on a Kiwami machine. That is
+      # the intended trade, and the way round it is NVIM_APPNAME against a
+      # checkout; the config repository carries the instructions, since that
+      # is where anybody editing it will be looking.
+      home-manager.users.${user}.xdg.configFile."nvim".source =
+        lib.mkDefault inputs.nvim-config;
+
+      # Where lazy.nvim puts the plugins it fetches.
+      #
+      # The only entry here that a change of approach would delete: plugins
+      # taken from nixpkgs instead would come from the store, and there would
+      # be nothing at runtime to keep. Until then this is the difference
+      # between opening an editor and watching it clone thirty repositories.
+      kiwami.persist.userDirectories = [ ".local/share/nvim" ];
+
+      # Nothing to persist for zellij or herdr.
       #
       # zellij keeps sessions in ~/.cache, which is meant to die with a boot,
       # and herdr keeps its state under XDG_STATE_HOME - which is

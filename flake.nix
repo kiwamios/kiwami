@@ -23,9 +23,20 @@
     # ownership that has to survive - so the well-solved version is used.
     impermanence.url = "github:nix-community/impermanence";
 
-    # The desktop shell. Pinned deliberately: Quickshell is alpha and ships
-    # breaking QML API changes, so it must move when we say so, not when a
-    # distro packager pushes.
+    # The editor's configuration, as an input rather than a copy.
+    #
+    # It is already a repository - a kickstart fork that gets edited on
+    # whichever machine is to hand - so vendoring the files here would fork it
+    # and leave two copies to drift. As an input there is one source of truth,
+    # flake.lock pins which commit each machine runs, and updating is
+    # `nix flake update nvim-config` like anything else.
+    #
+    # flake = false: it is a directory of lua, not a flake.
+    nvim-config = {
+      url = "github:jimzer/kickstart.nvim";
+      flake = false;
+    };
+
     # A terminal workspace manager, not in nixpkgs - it ships its own flake.
     #
     # Pinned to a release tag rather than master: the docs recommend it, and a
@@ -38,6 +49,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # The desktop shell. Pinned deliberately: Quickshell is alpha and ships
+    # breaking QML API changes, so it must move when we say so, not when a
+    # distro packager pushes.
     quickshell = {
       url = "github:quickshell-mirror/quickshell";
       inputs.nixpkgs.follows = "nixpkgs";

@@ -135,6 +135,22 @@
         "type": "github"
       }
     },
+    "nvim-config": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788964243,
+        "narHash": "sha256-XHuncZUK27+OxkFy7k9FsEzUygUWqpV3h9odlEcCWg4=",
+        "owner": "jimzer",
+        "repo": "kickstart.nvim",
+        "rev": "0c0cd84a856dc88d8d0232e678e5e60254414bf2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jimzer",
+        "repo": "kickstart.nvim",
+        "type": "github"
+      }
+    },
     "quickshell": {
       "inputs": {
         "nixpkgs": [
@@ -162,6 +178,7 @@
         "home-manager": "home-manager",
         "impermanence": "impermanence",
         "nixpkgs": "nixpkgs_2",
+        "nvim-config": "nvim-config",
         "quickshell": "quickshell"
       }
     },
