@@ -14,7 +14,6 @@
 
 let
   cfg = config.kiwami.apps;
-  user = config.kiwami.user;
 in
 {
   options.kiwami.apps = {
@@ -30,58 +29,23 @@ in
   config = lib.mkMerge [
     (lib.mkIf cfg.terminal {
       environment.systemPackages = [
-        pkgs.neovim
         pkgs.zellij
         inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default
-
-        # What the editor's config assumes exists.
-        #
-        # kickstart documents these and a machine without them starts by
-        # printing "No C compiler found!" eleven times: nvim-treesitter builds
-        # its parsers at runtime, so it wants a compiler, make and tree-sitter
-        # itself. Telescope shells out to ripgrep and fd, and mason unpacks
-        # what it downloads with unzip.
-        #
-        # This is the price of taking the config verbatim. Moving plugins into
-        # nixpkgs would remove most of it - grammars would arrive pre-built
-        # from the store, and nothing would compile on the machine at all.
-        pkgs.gcc
-        pkgs.gnumake
-        pkgs.tree-sitter
-        pkgs.ripgrep
-        pkgs.fd
-        pkgs.unzip
       ];
 
-      # The editor's configuration, from the flake rather than the machine.
-      #
-      # mkDefault so a host can replace it outright: this is my config, and
-      # somebody else's machine has no business being made to use it.
-      #
-      # Read-only, like every other config Kiwami places - which means
-      # :Lazy update cannot write lazy-lock.json on a Kiwami machine. That is
-      # the intended trade, and the way round it is NVIM_APPNAME against a
-      # checkout; the config repository carries the instructions, since that
-      # is where anybody editing it will be looking.
-      home-manager.users.${user}.xdg.configFile."nvim".source =
-        lib.mkDefault inputs.nvim-config;
-
-      # Where lazy.nvim puts the plugins it fetches.
-      #
-      # The only entry here that a change of approach would delete: plugins
-      # taken from nixpkgs instead would come from the store, and there would
-      # be nothing at runtime to keep. Until then this is the difference
-      # between opening an editor and watching it clone thirty repositories.
-      kiwami.persist.userDirectories = [ ".local/share/nvim" ];
+      # neovim is not here. It is built, not installed - plugins, language
+      # servers and configuration all resolved by nix - so it has a module of
+      # its own in modules/neovim.nix. Nothing it needs is fetched at runtime,
+      # which is why no compiler, no lockfile and no plugin directory appear
+      # anywhere in this file.
 
       # Nothing to persist for zellij or herdr.
       #
       # zellij keeps sessions in ~/.cache, which is meant to die with a boot,
       # and herdr keeps its state under XDG_STATE_HOME - which is
       # ~/.local/state, already persisted. neovim's shada and undo history are
-      # in the same place. Verified by reading the binaries rather than
-      # assumed, because "it probably uses ~/.config" is how a card collection
-      # gets lost.
+      # in the same place, and its plugins are in the store rather than the
+      # home directory, so it has nothing of its own to keep either.
     })
 
     (lib.mkIf cfg.desktop {
