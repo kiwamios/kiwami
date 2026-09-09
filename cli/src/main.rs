@@ -7,6 +7,7 @@ mod net;
 mod nix;
 mod remote;
 mod passwd;
+mod persist;
 mod snapshot;
 mod wallpaper;
 mod paths;
@@ -111,6 +112,11 @@ enum Cmd {
         out: String,
     },
     /// Back /persist up, and put it back
+    /// What survives a reboot, and what does not
+    Persist {
+        #[command(subcommand)]
+        action: PersistCmd,
+    },
     /// The pictures behind everything, and which one is showing
     Wallpaper {
         #[command(subcommand)]
@@ -137,6 +143,21 @@ enum Cmd {
 enum AuthCmd {
     /// Log in to whatever is missing, one at a time
     Login,
+}
+
+#[derive(Subcommand)]
+enum PersistCmd {
+    /// What the root holds that will be destroyed at the next boot
+    Lost {
+        /// How far in to look. 0 is the shape of it; deeper finds the service.
+        #[arg(long, short, default_value = "0")]
+        depth: usize,
+        /// Measure each one. Slower, and the reason to bother.
+        #[arg(long)]
+        size: bool,
+    },
+    /// What this machine has been told to keep
+    Declared,
 }
 
 #[derive(Subcommand)]
@@ -296,6 +317,16 @@ fn main() -> std::process::ExitCode {
         Cmd::Image { host, out } => {
             if let Err(e) = update::image(host, out) {
                 eprintln!("image: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+        Cmd::Persist { action } => {
+            let r = match action {
+                PersistCmd::Lost { depth, size } => persist::lost(depth, size),
+                PersistCmd::Declared => persist::declared(),
+            };
+            if let Err(e) = r {
+                eprintln!("persist: {e}");
                 return std::process::ExitCode::FAILURE;
             }
         }
