@@ -118,22 +118,29 @@ fn walk(
 /// Stops at a depth rather than walking a whole tree: this is here to tell
 /// you which of these is worth caring about, and a number that takes a minute
 /// to produce is a number nobody waits for.
+///
+/// Blocks rather than file length, so this agrees with `du`. The two differ
+/// by more than rounding on a tree of small files - the orphaned plugin
+/// directory that prompted `orphans` was 102M of content in 131M of blocks -
+/// and the question being asked is how much disk comes back, which is the
+/// blocks.
 fn bytes_under(path: &Path, depth: usize) -> u64 {
     let Ok(meta) = fs::symlink_metadata(path) else { return 0 };
     if meta.file_type().is_symlink() {
         return 0;
     }
     if !meta.is_dir() {
-        return meta.len();
+        return meta.blocks() * 512;
     }
     if depth > 8 {
         return 0;
     }
     let Ok(entries) = fs::read_dir(path) else { return 0 };
-    entries
-        .flatten()
-        .map(|e| bytes_under(&e.path(), depth + 1))
-        .sum()
+    meta.blocks() * 512
+        + entries
+            .flatten()
+            .map(|e| bytes_under(&e.path(), depth + 1))
+            .sum::<u64>()
 }
 
 fn human(n: u64) -> String {
