@@ -155,6 +155,9 @@ enum PersistCmd {
         /// Measure each one. Slower, and the reason to bother.
         #[arg(long)]
         size: bool,
+        /// Look only under this path, e.g. /var/lib
+        #[arg(long)]
+        under: Option<String>,
     },
     /// What this machine has been told to keep
     Declared,
@@ -322,7 +325,7 @@ fn main() -> std::process::ExitCode {
         }
         Cmd::Persist { action } => {
             let r = match action {
-                PersistCmd::Lost { depth, size } => persist::lost(depth, size),
+                PersistCmd::Lost { depth, size, under } => persist::lost(depth, size, under),
                 PersistCmd::Declared => persist::declared(),
             };
             if let Err(e) = r {

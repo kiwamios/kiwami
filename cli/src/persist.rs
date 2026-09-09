@@ -22,18 +22,27 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-pub fn lost(depth: usize, show_size: bool) -> Result<(), String> {
+pub fn lost(depth: usize, show_size: bool, under: Option<String>) -> Result<(), String> {
     if !Path::new("/persist").is_dir() {
         println!("not an ephemeral-root machine - nothing is wiped at boot");
         return Ok(());
     }
 
+    // Narrowing is a path, not a list of things we think are boring. The
+    // check this replaced tried to guess which losses mattered and got it
+    // wrong in both directions; here the person looking says where to look.
+    let start = under.clone().unwrap_or_else(|| "/".to_string());
+    let start = Path::new(&start);
+    if !start.is_dir() {
+        return Err(format!("{} is not a directory", start.display()));
+    }
+
     let root_dev = fs::metadata("/").map_err(|e| format!("/: {e}"))?.dev();
     let mut found: BTreeMap<String, u64> = BTreeMap::new();
-    walk(Path::new("/"), 0, depth, root_dev, show_size, &mut found);
+    walk(start, 0, depth, root_dev, &mut found);
 
     if found.is_empty() {
-        println!("nothing on the root but what was declared.");
+        println!("nothing under {} that a reboot destroys.", start.display());
         return Ok(());
     }
 
@@ -49,8 +58,12 @@ pub fn lost(depth: usize, show_size: bool) -> Result<(), String> {
     }
 
     println!("\n{} path(s) at depth {depth}.", found.len());
-    if depth < 6 {
-        println!("Deeper:  kiwami persist --depth {}", depth + 1);
+    let scope = under
+        .as_ref()
+        .map(|u| format!(" --under {u}"))
+        .unwrap_or_default();
+    if depth < 8 {
+        println!("Deeper:  kiwami persist lost --depth {}{scope}", depth + 1);
     }
     Ok(())
 }
@@ -71,7 +84,6 @@ fn walk(
     level: usize,
     max: usize,
     root_dev: u64,
-    show_size: bool,
     out: &mut BTreeMap<String, u64>,
 ) {
     let Ok(entries) = fs::read_dir(dir) else { return };
@@ -87,10 +99,16 @@ fn walk(
         }
 
         if level >= max || !meta.is_dir() {
-            let size = if show_size { bytes_under(&path, 0) } else { 0 };
-            out.insert(path.to_string_lossy().into_owned(), size);
+            // Measured always, because the size is what decides whether it is
+            // listed: an empty directory loses nothing, and 31 of the 57
+            // entries on the first real run were empty. More than half the
+            // output was places with nothing in them.
+            let size = bytes_under(&path, 0);
+            if size > 0 {
+                out.insert(path.to_string_lossy().into_owned(), size);
+            }
         } else {
-            walk(&path, level + 1, max, root_dev, show_size, out);
+            walk(&path, level + 1, max, root_dev, out);
         }
     }
 }
