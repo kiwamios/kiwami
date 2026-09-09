@@ -160,6 +160,12 @@ enum PersistCmd {
     },
     /// What this machine has been told to keep
     Declared,
+    /// What /persist keeps that nothing declares any more
+    Orphans {
+        /// Measure each one. On by default: the size is the reason to look.
+        #[arg(long, default_value_t = true)]
+        size: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -326,6 +332,7 @@ fn main() -> std::process::ExitCode {
             let r = match action {
                 PersistCmd::Lost { depth, size, under } => persist::lost(depth, size, under),
                 PersistCmd::Declared => persist::declared(),
+                PersistCmd::Orphans { size } => persist::orphans(size),
             };
             if let Err(e) = r {
                 eprintln!("persist: {e}");

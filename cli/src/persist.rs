@@ -151,8 +151,11 @@ fn human(n: u64) -> String {
     }
 }
 
-/// What this machine has been told to keep.
-pub fn declared() -> Result<(), String> {
+/// The paths this machine has been told to keep, as they appear on the root.
+///
+/// Shared by `declared` and `orphans`, because the second is only useful if it
+/// asks exactly the same question as the first and subtracts the answer.
+fn declared_paths() -> Result<Vec<PathBuf>, String> {
     let raw = fs::read_to_string("/etc/kiwami/persist.json")
         .map_err(|e| format!("/etc/kiwami/persist.json: {e}"))?;
     let v: serde_json::Value =
@@ -174,6 +177,12 @@ pub fn declared() -> Result<(), String> {
         paths.extend(list("userFiles").iter().map(|f| home.join(f)));
     }
     paths.sort();
+    Ok(paths)
+}
+
+/// What this machine has been told to keep.
+pub fn declared() -> Result<(), String> {
+    let paths = declared_paths()?;
 
     println!("Declared, and so surviving a boot:\n");
     for p in &paths {
@@ -185,4 +194,91 @@ pub fn declared() -> Result<(), String> {
     }
     println!("\n{} declared. ? means nothing is there yet.", paths.len());
     Ok(())
+}
+
+/// What /persist holds that nothing asks for any more.
+///
+/// impermanence never deletes. It bind-mounts the declared paths out of
+/// /persist over a wiped root, and that is the whole of what it does - so
+/// removing a line from kiwami.persist removes the *mount*, not the bytes.
+/// The data stays where it was, unreachable, because nothing mounts it any
+/// more; `ls` on the old location shows an empty directory and the disk keeps
+/// the copy.
+///
+/// That default is right - a typo in a config should never delete a card
+/// collection - but it is silent in both directions. Nothing says the data
+/// stayed, and nothing says it is still in every backup, because the backup
+/// takes /persist whole. Dropping one entry left 131M here, which was 98% of
+/// the /persist on that machine and had been going to R2 for weeks.
+///
+/// So this is the third question, and the only one that finds a problem:
+/// `lost` is what dies at the next boot, `declared` is what is kept, and this
+/// is what is kept that nobody asked for.
+pub fn orphans(show_size: bool) -> Result<(), String> {
+    if !Path::new("/persist").is_dir() {
+        println!("not an ephemeral-root machine - nothing is bind-mounted out of /persist");
+        return Ok(());
+    }
+
+    let declared = declared_paths()?;
+    let mut found: Vec<(String, u64)> = Vec::new();
+    walk_persist(Path::new("/persist"), &declared, &mut found);
+
+    if found.is_empty() {
+        println!("Nothing in /persist that is not declared.");
+        return Ok(());
+    }
+
+    found.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let total: u64 = found.iter().map(|(_, n)| *n).sum();
+
+    println!("In /persist, and declared by nothing:\n");
+    for (path, size) in &found {
+        if show_size {
+            println!("  {:>9}  {path}", human(*size));
+        } else {
+            println!("  {path}");
+        }
+    }
+
+    println!("\n{} path(s), {} in total.", found.len(), human(total));
+    println!("These survive every boot and are in every backup. Nothing reads");
+    println!("them. Deleting one is `sudo rm -rf` on the path as printed -");
+    println!("check what it was before you do, because this cannot tell you.");
+    Ok(())
+}
+
+/// Walk /persist, reporting what no declaration covers.
+///
+/// Three cases at each entry, and the middle one is the reason this is not a
+/// flat listing: a directory can be undeclared itself and still hold the
+/// declared path. /persist/home/kiwami/.local/share is nobody's declaration,
+/// but Anki2 lives inside it, so it has to be descended into rather than
+/// reported.
+fn walk_persist(dir: &Path, declared: &[PathBuf], out: &mut Vec<(String, u64)>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let path = e.path();
+
+        // The path this would be on the root, which is what a declaration
+        // names: /persist/home/x/.ssh is a declaration of /home/x/.ssh.
+        let Ok(rel) = path.strip_prefix("/persist") else { continue };
+        let on_root = Path::new("/").join(rel);
+
+        if declared.iter().any(|d| on_root.starts_with(d)) {
+            // Declared, or inside something declared.
+            continue;
+        }
+
+        if declared.iter().any(|d| d.starts_with(&on_root)) {
+            // Holds a declaration further down.
+            walk_persist(&path, declared, out);
+            continue;
+        }
+
+        // Reported as the whole subtree rather than descended into: the thing
+        // worth seeing is "nvim, 131M", not four thousand plugin files.
+        let size = bytes_under(&path, 0);
+        out.push((path.to_string_lossy().into_owned(), size));
+    }
 }
