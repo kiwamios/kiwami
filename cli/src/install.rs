@@ -277,7 +277,7 @@ pub fn run_install(opts: Options) -> Result<(), String> {
     // cheap eval - `builtins.attrNames` does not force the configurations -
     // and it is the difference between "unknown host" and "unknown host,
     // reported after your disk was erased".
-    let mut flake = opts.flake.clone();
+    let mut flake = normalise_flake_ref(&opts.flake);
 
     // Kiwami's own repository describes the test machines and nothing else, so
     // installing from it offers a menu of vm-* fixtures and a "new machine"
@@ -311,11 +311,28 @@ pub fn run_install(opts: Options) -> Result<(), String> {
 
     // Now that a new machine has actually been chosen, give it somewhere to
     // be written down.
+    //
+    // `flake` is deliberately not reassigned to the clone. It used to be, and
+    // that is how a machine came to record kiwami.flake = "/home/nixos/kiwami"
+    // - the installer's scratch clone, inside the live ISO's home, which
+    // ceases to exist at the first reboot. The machine then had no idea where
+    // to rebuild from, and the only copy of its generated host config went
+    // with the live environment.
+    //
+    // Two different questions were sharing one variable: *where do I work*
+    // and *where does this machine's config live*. The checkout answers the
+    // first and is temporary; the flake reference answers the second and is
+    // written into the installed system.
     if (host.create || opts.relayout) && checkout.is_none() {
-        let dir = clone_flake(&flake, opts.assume_yes)?;
-        flake = dir.to_string_lossy().to_string();
-        checkout = Some(dir);
+        checkout = Some(clone_flake(&flake, opts.assume_yes)?);
     }
+
+    // What the work happens against: the clone when there is one, otherwise
+    // the reference itself, which by here is a local path.
+    let workdir = checkout
+        .clone()
+        .map(|d| d.to_string_lossy().to_string())
+        .unwrap_or_else(|| flake.clone());
     println!("    host: {}", host.name);
     if host.create {
         println!("    will scaffold hosts/{}", host.name);
@@ -337,7 +354,7 @@ pub fn run_install(opts: Options) -> Result<(), String> {
     let declared = if host.create || opts.relayout {
         Vec::new()
     } else {
-        host_disks(&flake, &host.name)?
+        host_disks(&workdir, &host.name)?
     };
 
     let mut targets: Vec<Disk> = if declared.is_empty() {
@@ -511,8 +528,8 @@ pub fn run_install(opts: Options) -> Result<(), String> {
     // formats and mounts. The layout is not restated here, which is the point
     // - it used to live twice, as parted calls in this file and as a
     // fileSystems module, agreeing only by comment.
-    println!("\n==> partitioning and formatting from {}#{}", flake, host.name);
-    run_disko(&flake, &host.name)?;
+    println!("\n==> partitioning and formatting from {}#{}", workdir, host.name);
+    run_disko(&workdir, &host.name)?;
 
     // The key has to exist on the installed root, not just in the installer's
     // memory, or /home asks for a passphrase from the second boot onward.
@@ -565,14 +582,14 @@ pub fn run_install(opts: Options) -> Result<(), String> {
             run("nixos-install", &["--system", &path, "--no-root-passwd"])?;
         }
         None => {
-            println!("==> installing {} (this takes a while)", flake);
-            let flake_ref = format!("{}#{}", flake, host.name);
+            println!("==> installing {} (this takes a while)", workdir);
+            let flake_ref = format!("{}#{}", workdir, host.name);
             run("nixos-install", &["--flake", &flake_ref, "--no-root-passwd"])?;
         }
     }
 
     println!("==> seeding the password");
-    seed_password(&flake, &host.name, opts.guided && !opts.assume_yes)?;
+    seed_password(&workdir, &host.name, opts.guided && !opts.assume_yes)?;
 
     println!("==> setting the boot order");
     fix_boot_order()?;
@@ -1058,7 +1075,10 @@ fn ask_for_machines_repo(assume_yes: bool) -> Result<String, String> {
         }
         let answer = prompt("\nYour repository (github:you/your-repo): ")
             .map_err(|e| e.to_string())?;
-        let answer = answer.trim().to_string();
+        // Typed as owner/repo more often than not, the example above
+        // notwithstanding. nix reads that as a registry lookup and fails
+        // naming neither the problem nor the fix.
+        let answer = normalise_flake_ref(&answer);
         if answer.is_empty() {
             println!("    nothing typed.");
             continue;
@@ -1822,6 +1842,28 @@ fn install_keyfile() -> Result<(), String> {
 ///
 /// Only the shapes worth guessing at. Anything else returns None and the
 /// caller says what it needs rather than inventing a URL.
+/// What the user typed, as a flake reference nix will accept.
+///
+/// `jimzer/kiwami-hosts` is what anybody types when the prompt's example is
+/// `github:you/your-repo`, and nix reads a bare `owner/repo` as an *indirect*
+/// reference - a lookup in the flake registry - so it fails with "cannot find
+/// flake 'flake:jimzer/kiwami-hosts' in the flake registries", which names
+/// neither the mistake nor the fix. Two slashes and no scheme is a GitHub
+/// slug and nothing else, so it is treated as one.
+pub fn normalise_flake_ref(input: &str) -> String {
+    let t = input.trim();
+    if t.is_empty() || t.contains(':') || t.starts_with('.') || t.starts_with('/') {
+        return t.to_string();
+    }
+    let parts: Vec<&str> = t.split('/').collect();
+    // owner/repo, or owner/repo/branch - anything else is left alone rather
+    // than guessed at.
+    if (parts.len() == 2 || parts.len() == 3) && parts.iter().all(|p| !p.is_empty()) {
+        return format!("github:{t}");
+    }
+    t.to_string()
+}
+
 fn clone_url(flake: &str) -> Option<String> {
     if let Some(rest) = flake.strip_prefix("github:") {
         let path = rest.split(['?', '#']).next()?;
@@ -1833,6 +1875,12 @@ fn clone_url(flake: &str) -> Option<String> {
         }
         None
     } else if flake.starts_with("https://") || flake.starts_with("git+https://") {
+        Some(flake.trim_start_matches("git+").split(['?', '#']).next()?.to_string())
+    } else if flake.starts_with("file://") || flake.starts_with("git+file://") {
+        // A path on this machine, served by git like any other remote. It is
+        // what an air-gapped install uses, and the only remote a test can
+        // stand up without credentials or a network - which is why the clone
+        // path went untested for as long as it did.
         Some(flake.trim_start_matches("git+").split(['?', '#']).next()?.to_string())
     } else {
         None
@@ -2185,7 +2233,8 @@ fn offer_host_push(checkout: &Option<PathBuf>, host: &str, assume_yes: bool) -> 
 
     println!("\n==> hosts/{host} exists only on this machine");
     if assume_yes {
-        println!("    push it with: sudo kiwami host push");
+        println!("    push it before rebooting - this medium is the only copy:");
+        println!("      sudo kiwami host push");
         return Ok(());
     }
     let answer = prompt("\nPush it to the flake now? [Y/n] ").map_err(|e| e.to_string())?;
@@ -2201,8 +2250,15 @@ fn offer_host_push(checkout: &Option<PathBuf>, host: &str, assume_yes: bool) -> 
         println!("\n==> github login");
         let status = Command::new("gh").args(["auth", "login"]).status();
         if !matches!(status, Ok(s) if s.success()) && !gh_authenticated() {
-            println!("    not logged in - push it after rebooting:");
-            println!("      sudo kiwami host push");
+            // Deliberately not "push it after rebooting". `host push` reads
+            // KIWAMI_REPO, which is this clone, inside the live image - the
+            // reboot destroys it and takes the only copy of hosts/<name> with
+            // it. Advice that cannot be followed is worse than none: it reads
+            // as "handled" and the loss is discovered later.
+            println!("    not logged in, so hosts/{host} stays on this medium only.");
+            println!("    It is at {}/hosts/{host}", repo.display());
+            println!("    Copy it out before rebooting, or log in and re-run:");
+            println!("      gh auth login && sudo kiwami host push");
             return Ok(());
         }
     }
@@ -2218,7 +2274,9 @@ fn offer_host_push(checkout: &Option<PathBuf>, host: &str, assume_yes: bool) -> 
             // simply not upstream yet, and saying so beats failing an install
             // that succeeded.
             println!("    could not push: {e}");
-            println!("    after rebooting:  sudo kiwami host push");
+            println!("    hosts/{host} is at {}/hosts/{host} and exists nowhere", repo.display());
+            println!("    else. The reboot destroys this medium, so copy it out or");
+            println!("    re-run `sudo kiwami host push` before rebooting.");
             Ok(())
         }
     }
@@ -2360,6 +2418,18 @@ fn mkpasswd(salt: Option<&str>) -> Result<String, String> {
     Ok(format!("{hash}\n"))
 }
 
+/// Whether this file holds a password, as opposed to holding nothing or
+/// holding the locked marker that means "no password".
+fn has_password(target: &Path) -> bool {
+    match fs::read_to_string(target) {
+        Ok(contents) => {
+            let t = contents.trim();
+            !t.is_empty() && t != LOCKED
+        }
+        Err(_) => false,
+    }
+}
+
 fn seed_password(flake: &str, host: &str, interactive: bool) -> Result<(), String> {
     let dir = Command::new("nix")
         .args([
@@ -2378,7 +2448,18 @@ fn seed_password(flake: &str, host: &str, interactive: bool) -> Result<(), Strin
     let users = target_users(flake, host);
     for user in &users {
         let target = target_state_path(&format!("{}/{}", dir.trim_start_matches('/'), user));
-        if target.exists() {
+
+        // Existence is not the question. `nixos-install` ran a few lines
+        // above, and its activation seeded this exact file with the locked
+        // marker - correctly, since failing closed beats a known default. So
+        // by the time we get here the file always exists, `continue` always
+        // fired, and the prompt was never shown: every interactive install
+        // finished with an account nobody could log into, under a heading
+        // that said "seeding the password".
+        //
+        // What is being asked is whether a *password* is already set, and a
+        // locked marker is the absence of one.
+        if has_password(&target) {
             continue;
         }
         let parent = target.parent().ok_or("bad password path")?;
@@ -2793,5 +2874,107 @@ mod machines_repo_tests {
         assert!(!is_distro("github:kiwamios/kiwami-hosts"));
         assert!(!is_distro("github:alice/kiwami"));
         assert!(!is_distro("/home/alice/my-machines"));
+    }
+}
+
+/// What the desktop install got wrong, in the order it got it wrong.
+///
+/// Every case here is a real failure from installing a real machine, and none
+/// of them could have been caught by the test that existed: `guided-test`
+/// asserts that prompts appear and aborts at the layout review, so it never
+/// reaches a completed install. These assert outcomes instead.
+#[cfg(test)]
+mod install_outcome_tests {
+    use super::*;
+
+    /// The prompt says `github:you/your-repo`, so people type the half that
+    /// looks like the answer. nix reads a bare owner/repo as a registry
+    /// lookup: "cannot find flake 'flake:jimzer/kiwami-hosts' in the flake
+    /// registries", which names neither the mistake nor the fix.
+    #[test]
+    fn a_bare_owner_repo_means_github() {
+        assert_eq!(normalise_flake_ref("jimzer/kiwami-hosts"), "github:jimzer/kiwami-hosts");
+        assert_eq!(normalise_flake_ref("  jimzer/kiwami-hosts  "), "github:jimzer/kiwami-hosts");
+        assert_eq!(normalise_flake_ref("jimzer/kiwami-hosts/main"), "github:jimzer/kiwami-hosts/main");
+    }
+
+    /// Anything that already says what it is, is left alone. Guessing at
+    /// these would break installing from a path, which is what every VM test
+    /// does.
+    #[test]
+    fn anything_explicit_is_left_alone() {
+        for r in [
+            "github:kiwamios/kiwami",
+            "git+file:///root/machines.git",
+            "https://github.com/jimzer/kiwami-hosts",
+            "/home/nixos/kiwami",
+            "./machines",
+            "path:/srv/machines",
+        ] {
+            assert_eq!(normalise_flake_ref(r), r, "{r} should not be rewritten");
+        }
+    }
+
+    /// A local bare repository is a real remote - it is what an air-gapped
+    /// install uses, and the only kind a test can stand up without
+    /// credentials. Not being clonable is why the clone path, where the worst
+    /// of these bugs lived, had never once been exercised.
+    #[test]
+    fn a_local_bare_repo_can_be_cloned() {
+        assert_eq!(
+            clone_url("git+file:///root/machines.git").as_deref(),
+            Some("file:///root/machines.git")
+        );
+        assert_eq!(
+            clone_url("file:///srv/machines.git").as_deref(),
+            Some("file:///srv/machines.git")
+        );
+    }
+
+    /// The one that cost an evening.
+    ///
+    /// A flake that must be cloned has two different answers to two different
+    /// questions: the clone is where the work happens, and the reference is
+    /// what the installed machine records as home. They shared a variable, so
+    /// the machine recorded "/home/nixos/kiwami" - a directory inside the
+    /// live ISO, gone at the first reboot, taking the only copy of the
+    /// generated host config with it.
+    #[test]
+    fn a_remote_flake_is_not_renamed_by_cloning_it() {
+        let reference = "github:jimzer/kiwami-hosts";
+        assert!(local_checkout(reference).is_none(), "a remote ref is not a checkout");
+        assert!(clone_url(reference).is_some(), "and it can be cloned");
+
+        // scaffold_host writes this into the machine's default.nix, and
+        // `kiwami update` reads it forever after. It must survive the clone.
+        assert_eq!(normalise_flake_ref(reference), reference);
+    }
+
+    /// The locked marker is the absence of a password, not the presence of
+    /// one. `nixos-install` runs before the prompt and its activation seeds
+    /// this file with "!", so a check for existence always fired `continue`
+    /// and no interactive install ever asked. The account was locked, under a
+    /// heading reading "seeding the password".
+    #[test]
+    fn a_locked_marker_is_not_a_password() {
+        let dir = std::env::temp_dir().join(format!("kiwami-pw-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let locked = dir.join("locked");
+        fs::write(&locked, format!("{LOCKED}\n")).unwrap();
+        assert!(!has_password(&locked), "! means no password was ever set");
+
+        let empty = dir.join("empty");
+        fs::write(&empty, "").unwrap();
+        assert!(!has_password(&empty), "an empty file is not a password");
+
+        let missing = dir.join("missing");
+        assert!(!has_password(&missing), "no file is not a password");
+
+        let real = dir.join("real");
+        fs::write(&real, "$6$rounds=656000$abc$def\n").unwrap();
+        assert!(has_password(&real), "a hash is a password");
+
+        fs::remove_dir_all(&dir).ok();
     }
 }

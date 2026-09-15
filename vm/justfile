@@ -120,6 +120,12 @@ guided-test:
 relayout-test: fetch-iso
     ./scripts/relayout-test.sh
 
+# What a completed install leaves behind, installed from a bare repo on the
+# machine itself - the clone path, which no other test exercises because they
+# all install from a local directory. Needs the installer ISO booted.
+install-outcome-test:
+    ./scripts/install-outcome-test.sh
+
 # Run the installer test matrix (needs start-test-disks)
 install-test:
     @./scripts/install-test.sh
