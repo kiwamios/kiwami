@@ -56,6 +56,13 @@ hl.bind(mod .. " + RETURN", hl.dsp.exec_cmd("ghostty"))
 hl.bind(mod .. " + Q", hl.dsp.window.close())
 hl.bind(mod .. " + SHIFT + E", hl.dsp.exit())
 
+-- Window state. fullscreen() toggles, so the same key gets you out.
+--
+-- Worth having bound even on a tiling compositor: a game, a video, or
+-- anything that wants the whole screen without negotiating for it.
+hl.bind(mod .. " + F", hl.dsp.window.fullscreen())
+hl.bind(mod .. " + SHIFT + F", hl.dsp.window.float())
+
 -- Escape hatch. The shell is a systemd unit with Restart=always, but a QML
 -- error can leave it flapping or up-with-no-bar. This is bound in the
 -- compositor, so it works even when the shell is completely gone.
