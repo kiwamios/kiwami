@@ -52,7 +52,12 @@ in
   # A machine that supports one thing should not open with a question about
   # it. The Exec line is the same `session` used by the autologin path, so
   # there is still exactly one definition of how this desktop starts.
-  services.displayManager.sessionPackages = lib.mkForce [
+  #
+  # kiwami.extraSessions is the way past this for a session that is genuinely
+  # a second thing rather than a second name for the same thing - a Steam
+  # gamescope session, say, which is a different compositor and not a
+  # different way of starting Hyprland.
+  services.displayManager.sessionPackages = lib.mkForce ([
     (pkgs.runCommand "kiwami-session"
       { passthru.providedSessions = [ "hyprland" ]; }
       ''
@@ -65,7 +70,7 @@ in
         Type=Application
         EOF
       '')
-  ];
+  ] ++ config.kiwami.extraSessions);
 
   # Autologin straight into Hyprland: the VM must reach a desktop with no
   # interaction so the agent harness can screenshot it.

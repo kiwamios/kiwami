@@ -546,6 +546,24 @@ in
       };
     };
 
+    extraSessions = mkOption {
+      type = types.listOf types.package;
+      default = [ ];
+      description = ''
+        Additional sessions the greeter offers, beyond the desktop.
+
+        The greeter is deliberately given one session, because Hyprland
+        registers two entries for itself and picking the wrong one produces a
+        session with no systemd targets - a failure that is quiet and
+        arrives later. That is enforced with mkForce, which also discards
+        sessions added on purpose by other modules.
+
+        So deliberate additions come through here. Each package must place a
+        .desktop file under share/wayland-sessions and carry
+        passthru.providedSessions, the same as the desktop's own entry.
+      '';
+    };
+
     hyprland.extraConfig = mkOption {
       type = types.lines;
       default = "";
